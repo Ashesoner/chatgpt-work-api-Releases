@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -18,6 +19,7 @@ import (
 	"github.com/AAAYNMMM/CWapi/internal/invocation"
 	"github.com/AAAYNMMM/CWapi/internal/processcontract"
 	"github.com/AAAYNMMM/CWapi/internal/security"
+	"github.com/AAAYNMMM/CWapi/internal/v2/commandproxy"
 	v2config "github.com/AAAYNMMM/CWapi/internal/v2/config"
 )
 
@@ -27,6 +29,8 @@ const (
 	maxOutputBytes         = 64 * 1024
 	maxPersistentProcesses = 16
 	maxPersistentRecords   = 64
+	persistentReadBytes    = 64 * 1024
+	persistentArchiveBytes = 512 * 1024
 )
 
 // Host is a model-free bridge to the private Codex app-server command/exec
@@ -39,6 +43,7 @@ type Host struct {
 	git                  string
 	gitSafety            *security.GitSafetyManager
 	protectedExecutables []string
+	proxyExecutable      string
 
 	policyMu         sync.RWMutex
 	accessProfile    string
@@ -57,17 +62,32 @@ type ExecInput struct {
 	Argv           []string
 	CWD            string
 	TimeoutSeconds int
+	StdoutCursor   int64
+	StderrCursor   int64
 }
 
 type ExecResult struct {
-	State     string
-	ProcessID string
-	PID       int
-	StartedAt string
-	ExitCode  int
-	Stdout    string
-	Stderr    string
-	Truncated bool
+	State           string
+	ProcessID       string
+	PID             int
+	StartedAt       string
+	ExitCode        int
+	Stdout          string
+	Stderr          string
+	StdoutCursor    int64
+	StderrCursor    int64
+	StdoutTruncated bool
+	StderrTruncated bool
+	Truncated       bool
+}
+
+type ProcessSummary struct {
+	ProcessID      string
+	State          string
+	Command        string
+	PID            int
+	StartedAt      string
+	ElapsedSeconds int64
 }
 
 type persistentProcess struct {
@@ -85,6 +105,10 @@ type persistentProcess struct {
 	runtime       *security.CommandRuntime
 	done          chan struct{}
 	stopRequested bool
+	stdoutDir     string
+	stderrDir     string
+	stdoutArchive commandproxy.ReadResult
+	stderrArchive commandproxy.ReadResult
 }
 
 func New(dataRoot string, cfg v2config.CodexConfig) (*Host, error) {
@@ -120,6 +144,7 @@ func New(dataRoot string, cfg v2config.CodexConfig) (*Host, error) {
 		service: service, resolver: resolver, dataRoot: filepath.Clean(dataRoot), git: gitExecutable,
 		gitSafety:            security.NewGitSafetyManager(gitExecutable, filepath.Clean(dataRoot)),
 		protectedExecutables: []string{snapshot.ExecutablePath, appExecutable, filepath.Join(appRoot, "runtime", "tunnel", "current", "tunnel-client.exe")},
+		proxyExecutable:      appExecutable,
 		accessProfile:        cfg.AccessProfile, networkAccess: cfg.NetworkAccess, remoteGitRewrite: cfg.RemoteGitRewrite,
 		processes: make(map[string]*persistentProcess),
 	}, nil
@@ -187,7 +212,7 @@ func (h *Host) Exec(ctx context.Context, workspaceRoot string, input ExecInput) 
 	case "run", "start":
 		return h.execute(ctx, filepath.Clean(workspaceRoot), input, action == "start")
 	case "status":
-		return h.persistentStatus(filepath.Clean(workspaceRoot), input.ProcessID)
+		return h.persistentStatus(filepath.Clean(workspaceRoot), input.ProcessID, input.StdoutCursor, input.StderrCursor)
 	case "stop":
 		return h.stopPersistent(ctx, filepath.Clean(workspaceRoot), input.ProcessID)
 	default:
@@ -276,8 +301,24 @@ func (h *Host) execute(ctx context.Context, workspaceRoot string, input ExecInpu
 			cancel()
 		}
 	}()
+	launchExecutable := final.Executable
+	launchArgv := final.Argv
+	stdoutDir, stderrDir := "", ""
+	if persistent {
+		stdoutDir = filepath.Join(runtime.ProcessRoot, "output", "stdout")
+		stderrDir = filepath.Join(runtime.ProcessRoot, "output", "stderr")
+		payloadPath := filepath.Join(runtime.ProcessRoot, "command-proxy.json")
+		if err := commandproxy.WritePayload(payloadPath, commandproxy.Payload{
+			Executable: final.Executable, Argv: append([]string(nil), final.Argv...), CWD: final.CWD,
+			StdoutDir: stdoutDir, StderrDir: stderrDir, MirrorOutput: false,
+		}); err != nil {
+			return ExecResult{}, err
+		}
+		launchExecutable = h.proxyExecutable
+		launchArgv = []string{commandproxy.Argument, payloadPath}
+	}
 	handle, err := h.service.StartCommand(commandCtx, codex.CommandSpec{
-		ProcessID: processID, Executable: final.Executable, Argv: final.Argv,
+		ProcessID: processID, Executable: launchExecutable, Argv: launchArgv,
 		CWD: final.CWD, WritableRoot: workspaceRoot,
 		WritableRoots: []string{runtime.ProcessRoot, filepath.Join(runtime.WorkspaceRuntime, "cache"), runtime.AuthRoot},
 		Environment:   environment,
@@ -292,7 +333,7 @@ func (h *Host) execute(ctx context.Context, workspaceRoot string, input ExecInpu
 		process := &persistentProcess{
 			id: processID, pid: handle.PID(), workspace: workspaceRoot, command: input.Command,
 			argv: append([]string(nil), input.Argv...), startedAt: startedAt, state: "running",
-			handle: handle, runtime: runtime, done: make(chan struct{}),
+			handle: handle, runtime: runtime, done: make(chan struct{}), stdoutDir: stdoutDir, stderrDir: stderrDir,
 		}
 		state := map[string]any{
 			"schema": "cwapi.persistent-process.v1", "process_id": processID, "workspace": workspaceRoot,
@@ -332,12 +373,23 @@ func (h *Host) watchPersistent(process *persistentProcess, cancel context.Cancel
 	result := <-process.handle.Done()
 	cancel()
 	output := commandResult(result, process.id, process.pid, process.startedAt)
+	stdoutArchive, _ := commandproxy.ReadTail(process.stdoutDir, persistentArchiveBytes)
+	stderrArchive, _ := commandproxy.ReadTail(process.stderrDir, persistentArchiveBytes)
+	if output.Stdout == "" {
+		output.Stdout, output.StdoutCursor, output.StdoutTruncated = stdoutArchive.Data, stdoutArchive.Cursor, stdoutArchive.Truncated
+	}
+	if output.Stderr == "" {
+		output.Stderr, output.StderrCursor, output.StderrTruncated = stderrArchive.Data, stderrArchive.Cursor, stderrArchive.Truncated
+	}
+	output.Truncated = output.Truncated || output.StdoutTruncated || output.StderrTruncated
 	process.mu.Lock()
 	if process.stopRequested {
 		output.State = "stopped"
 	}
 	process.state = output.State
 	process.result = output
+	process.stdoutArchive = stdoutArchive
+	process.stderrArchive = stderrArchive
 	process.mu.Unlock()
 	process.runtime.Cleanup()
 	close(process.done)
@@ -365,12 +417,15 @@ func (h *Host) pruneTerminalProcesses() {
 	}
 }
 
-func (h *Host) persistentStatus(workspaceRoot, processID string) (ExecResult, error) {
+func (h *Host) persistentStatus(workspaceRoot, processID string, stdoutCursor, stderrCursor int64) (ExecResult, error) {
+	if stdoutCursor < 0 || stderrCursor < 0 {
+		return ExecResult{}, errors.New("CODING_OUTPUT_CURSOR_INVALID")
+	}
 	process, err := h.lookupPersistent(workspaceRoot, processID)
 	if err != nil {
 		return ExecResult{}, err
 	}
-	return process.snapshot(), nil
+	return process.snapshotWithOutput(stdoutCursor, stderrCursor), nil
 }
 
 func (h *Host) stopPersistent(ctx context.Context, workspaceRoot, processID string) (ExecResult, error) {
@@ -434,6 +489,91 @@ func (p *persistentProcess) snapshotLocked() ExecResult {
 		State: p.state, ProcessID: p.id, PID: p.pid,
 		StartedAt: p.startedAt.Format(time.RFC3339Nano),
 	}
+}
+
+func (p *persistentProcess) snapshotWithOutput(stdoutCursor, stderrCursor int64) ExecResult {
+	p.mu.RLock()
+	result := p.snapshotLocked()
+	terminal := p.result.State != ""
+	stdoutDir, stderrDir := p.stdoutDir, p.stderrDir
+	stdoutArchive, stderrArchive := p.stdoutArchive, p.stderrArchive
+	p.mu.RUnlock()
+
+	var stdoutChunk, stderrChunk commandproxy.ReadResult
+	if terminal {
+		stdoutChunk = archiveSince(stdoutArchive, stdoutCursor, persistentReadBytes)
+		stderrChunk = archiveSince(stderrArchive, stderrCursor, persistentReadBytes)
+	} else {
+		stdoutChunk, _ = commandproxy.ReadSince(stdoutDir, stdoutCursor, persistentReadBytes)
+		stderrChunk, _ = commandproxy.ReadSince(stderrDir, stderrCursor, persistentReadBytes)
+	}
+	result.Stdout, result.Stderr = stdoutChunk.Data, stderrChunk.Data
+	result.StdoutCursor, result.StderrCursor = stdoutChunk.Cursor, stderrChunk.Cursor
+	result.StdoutTruncated, result.StderrTruncated = stdoutChunk.Truncated, stderrChunk.Truncated
+	result.Truncated = result.StdoutTruncated || result.StderrTruncated
+	return result
+}
+
+func archiveSince(archive commandproxy.ReadResult, cursor int64, limit int) commandproxy.ReadResult {
+	end := archive.Cursor
+	base := end - int64(len(archive.Data))
+	if base < 0 {
+		base = 0
+	}
+	result := commandproxy.ReadResult{Cursor: cursor}
+	if cursor < base {
+		cursor = base
+		result.Truncated = true
+	}
+	if cursor >= end {
+		result.Cursor = end
+		return result
+	}
+	start := int(cursor - base)
+	stop := start + limit
+	if stop > len(archive.Data) {
+		stop = len(archive.Data)
+	}
+	result.Data = archive.Data[start:stop]
+	result.Cursor = base + int64(stop)
+	result.Truncated = result.Truncated || archive.Truncated && cursor == base
+	return result
+}
+
+func (h *Host) WorkspaceProcesses(workspaceRoot string) []ProcessSummary {
+	if h == nil {
+		return nil
+	}
+	workspaceRoot = filepath.Clean(workspaceRoot)
+	h.processMu.RLock()
+	processes := make([]*persistentProcess, 0, len(h.processes))
+	for _, process := range h.processes {
+		if strings.EqualFold(process.workspace, workspaceRoot) {
+			processes = append(processes, process)
+		}
+	}
+	h.processMu.RUnlock()
+	now := time.Now().UTC()
+	result := make([]ProcessSummary, 0, len(processes))
+	for _, process := range processes {
+		process.mu.RLock()
+		state := process.state
+		if state != "running" && state != "stopping" {
+			process.mu.RUnlock()
+			continue
+		}
+		elapsed := int64(now.Sub(process.startedAt) / time.Second)
+		if elapsed < 0 {
+			elapsed = 0
+		}
+		result = append(result, ProcessSummary{
+			ProcessID: process.id, State: state, Command: process.command, PID: process.pid,
+			StartedAt: process.startedAt.Format(time.RFC3339Nano), ElapsedSeconds: elapsed,
+		})
+		process.mu.RUnlock()
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].StartedAt < result[j].StartedAt })
+	return result
 }
 
 func (h *Host) Close(ctx context.Context) error {

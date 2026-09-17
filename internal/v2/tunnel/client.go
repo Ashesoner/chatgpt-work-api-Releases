@@ -267,6 +267,101 @@ func (m *Manager) restartAfter(token uint64, delay time.Duration) {
 	}
 }
 
+// Reconfigure switches this manager to a different tunnel identity without
+// tearing down the MCP server or the Coding/Agent runtime behind it. Only the
+// tunnel-client child process is replaced. If the new identity cannot start,
+// the previous identity is restored best-effort before the error is returned.
+func (m *Manager) Reconfigure(ctx context.Context, config v2config.TunnelConfig, apiKey string) error {
+	if m == nil {
+		return errors.New("OPENAI_TUNNEL_UNAVAILABLE")
+	}
+	if err := v2config.ValidateTunnel(config); err != nil {
+		return err
+	}
+	if apiKey != "" {
+		if err := validateAPIKey(apiKey); err != nil {
+			return err
+		}
+	}
+	if config.Enabled && strings.TrimSpace(m.mcpURL) == "" {
+		return errors.New("OPENAI_TUNNEL_MCP_URL_REQUIRED")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	m.mu.Lock()
+	if m.closed {
+		m.mu.Unlock()
+		return errors.New("OPENAI_TUNNEL_CLOSED")
+	}
+	oldConfig, oldKey := m.config, m.apiKey
+	m.restartToken++
+	run := m.process
+	m.process = nil
+	m.mu.Unlock()
+
+	if err := stopActiveProcess(ctx, run); err != nil {
+		m.mu.Lock()
+		m.config, m.apiKey = oldConfig, oldKey
+		state := initialState(oldConfig.Enabled)
+		if run != nil {
+			select {
+			case <-run.done:
+			default:
+				m.process = run
+				state = "running"
+			}
+		}
+		m.snapshot = m.configuredSnapshot(state, "OPENAI_TUNNEL_STOP_FAILED")
+		m.mu.Unlock()
+		return err
+	}
+
+	m.mu.Lock()
+	m.config, m.apiKey = config, apiKey
+	m.restartCount = 0
+	m.snapshot = m.configuredSnapshot(initialState(config.Enabled), "")
+	m.mu.Unlock()
+	if err := m.Start(ctx); err == nil {
+		return nil
+	} else {
+		newErr := err
+		m.mu.Lock()
+		m.restartToken++
+		failedRun := m.process
+		m.process = nil
+		m.config, m.apiKey = oldConfig, oldKey
+		m.restartCount = 0
+		m.snapshot = m.configuredSnapshot(initialState(oldConfig.Enabled), "")
+		m.mu.Unlock()
+		_ = stopActiveProcess(ctx, failedRun)
+		rollbackErr := m.Start(ctx)
+		return errors.Join(newErr, rollbackErr)
+	}
+}
+
+func stopActiveProcess(ctx context.Context, run *activeProcess) error {
+	if run == nil {
+		return nil
+	}
+	if err := run.process.Kill(); err != nil {
+		select {
+		case <-run.done:
+			return nil
+		case <-ctx.Done():
+			return errors.New("OPENAI_TUNNEL_STOP_FAILED")
+		default:
+			return fmt.Errorf("OPENAI_TUNNEL_STOP_FAILED: %w", err)
+		}
+	}
+	select {
+	case <-run.done:
+		return nil
+	case <-ctx.Done():
+		return errors.New("OPENAI_TUNNEL_STOP_FAILED")
+	}
+}
 func (m *Manager) Close(ctx context.Context) error {
 	if m == nil {
 		return nil
@@ -285,24 +380,9 @@ func (m *Manager) Close(ctx context.Context) error {
 	m.process = nil
 	m.snapshot = m.configuredSnapshot(initialState(m.config.Enabled), "")
 	m.mu.Unlock()
-	if run == nil {
-		return nil
-	}
-	if err := run.process.Kill(); err != nil {
-		select {
-		case <-run.done:
-		case <-ctx.Done():
-			return errors.New("OPENAI_TUNNEL_STOP_FAILED")
-		default:
-			return fmt.Errorf("OPENAI_TUNNEL_STOP_FAILED: %w", err)
-		}
-	}
-	select {
-	case <-run.done:
-		return nil
-	case <-ctx.Done():
-		return errors.New("OPENAI_TUNNEL_STOP_FAILED")
-	}
+
+	return stopActiveProcess(ctx, run)
+
 }
 
 func (m *Manager) configuredSnapshot(state, lastError string) Snapshot {

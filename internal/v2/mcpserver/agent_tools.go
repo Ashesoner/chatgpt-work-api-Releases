@@ -3,7 +3,9 @@ package mcpserver
 import (
 	"context"
 	"errors"
+	"net/url"
 
+	"github.com/AAAYNMMM/CWapi/internal/v2/attachments"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -33,10 +35,24 @@ type AgentProgress struct {
 	Message   string `json:"message"`
 }
 
+type AgentStreamToolCallDelta struct {
+	Index          int    `json:"index"`
+	ID             string `json:"id,omitempty"`
+	Name           string `json:"name,omitempty"`
+	ArgumentsDelta string `json:"arguments_delta,omitempty"`
+}
+
+type AgentStreamChunk struct {
+	RequestID      string                     `json:"request_id"`
+	ContentDelta   string                     `json:"content_delta,omitempty"`
+	ToolCallDeltas []AgentStreamToolCallDelta `json:"tool_call_deltas,omitempty"`
+}
+
 type AgentExchangeInput struct {
-	Responses []AgentExchangeResponse `json:"responses,omitempty"`
-	Progress  []AgentProgress         `json:"progress,omitempty"`
-	Capacity  int                     `json:"capacity,omitempty"`
+	Responses    []AgentExchangeResponse `json:"responses,omitempty"`
+	Progress     []AgentProgress         `json:"progress,omitempty"`
+	StreamChunks []AgentStreamChunk      `json:"stream_chunks,omitempty"`
+	Capacity     int                     `json:"capacity,omitempty"`
 }
 
 type AgentStructuredError struct {
@@ -56,21 +72,27 @@ type AgentExchangeResult struct {
 }
 
 type AgentExchangeRequest struct {
-	RequestID       string         `json:"request_id"`
-	TaskID          string         `json:"task_id,omitempty"`
-	CorrelationID   string         `json:"correlation_id,omitempty"`
-	State           string         `json:"state"`
-	LifecycleState  string         `json:"lifecycle_state"`
-	Delivery        int            `json:"delivery"`
-	PreviousState   string         `json:"previous_state,omitempty"`
-	ResumeReason    string         `json:"resume_reason,omitempty"`
-	CreatedAt       string         `json:"created_at"`
-	ClaimedAt       string         `json:"claimed_at"`
-	LastDeliveredAt string         `json:"last_delivered_at"`
-	LastActivity    string         `json:"last_activity"`
-	DeadlineAt      string         `json:"deadline_at"`
-	Event           string         `json:"event,omitempty"`
-	Request         map[string]any `json:"request"`
+	RequestID          string                 `json:"request_id"`
+	TaskID             string                 `json:"task_id,omitempty"`
+	CorrelationID      string                 `json:"correlation_id,omitempty"`
+	State              string                 `json:"state"`
+	LifecycleState     string                 `json:"lifecycle_state"`
+	Delivery           int                    `json:"delivery"`
+	PreviousState      string                 `json:"previous_state,omitempty"`
+	ResumeReason       string                 `json:"resume_reason,omitempty"`
+	CreatedAt          string                 `json:"created_at"`
+	ClaimedAt          string                 `json:"claimed_at"`
+	LastDeliveredAt    string                 `json:"last_delivered_at"`
+	LastActivity       string                 `json:"last_activity"`
+	DeadlineAt         string                 `json:"deadline_at"`
+	ActivityDeadlineAt string                 `json:"activity_deadline_at"`
+	HardDeadlineAt     string                 `json:"hard_deadline_at"`
+	Progress           string                 `json:"progress,omitempty"`
+	ProgressAt         string                 `json:"progress_at,omitempty"`
+	Event              string                 `json:"event,omitempty"`
+	Request            map[string]any         `json:"request"`
+	Attachments        []attachments.Metadata `json:"attachments,omitempty"`
+	ContentItems       []attachments.Item     `json:"-"`
 }
 
 type AgentEvent struct {
@@ -84,21 +106,33 @@ type AgentEvent struct {
 	At         string `json:"at"`
 }
 
+type AgentRequestActivity struct {
+	RequestID      string `json:"request_id"`
+	TaskID         string `json:"task_id,omitempty"`
+	CorrelationID  string `json:"correlation_id,omitempty"`
+	State          string `json:"state"`
+	Progress       string `json:"progress,omitempty"`
+	LastActivity   string `json:"last_activity"`
+	HardDeadlineAt string `json:"hard_deadline_at"`
+}
+
 type AgentExchangeActivity struct {
-	Revision        uint64 `json:"revision"`
-	Changed         bool   `json:"changed"`
-	Pending         int    `json:"pending"`
-	Inflight        int    `json:"inflight"`
-	Active          int    `json:"active"`
-	QueuedRequests  int    `json:"queued_requests"`
-	ActiveRequests  int    `json:"active_requests"`
-	IdleCount       int    `json:"idle_count"`
-	WaitedMillis    int64  `json:"waited_millis"`
-	LastState       string `json:"last_state,omitempty"`
-	LastError       string `json:"last_error,omitempty"`
-	LastHeartbeatAt string `json:"last_heartbeat_at,omitempty"`
-	LastProgress    string `json:"last_progress,omitempty"`
-	NextAction      string `json:"next_action"`
+	Revision        uint64                 `json:"revision"`
+	Changed         bool                   `json:"changed"`
+	Pending         int                    `json:"pending"`
+	Inflight        int                    `json:"inflight"`
+	Active          int                    `json:"active"`
+	QueuedRequests  int                    `json:"queued_requests"`
+	ActiveRequests  int                    `json:"active_requests"`
+	IdleCount       int                    `json:"idle_count"`
+	WaitedMillis    int64                  `json:"waited_millis"`
+	LastState       string                 `json:"last_state,omitempty"`
+	LastError       string                 `json:"last_error,omitempty"`
+	LastHeartbeatAt string                 `json:"last_heartbeat_at,omitempty"`
+	LastProgress    string                 `json:"last_progress,omitempty"`
+	NextAction      string                 `json:"next_action"`
+	ImageBytes      int64                  `json:"image_bytes"`
+	Requests        []AgentRequestActivity `json:"requests,omitempty"`
 }
 
 type AgentExchangeOutput struct {
@@ -134,9 +168,10 @@ func RegisterAgent(server *mcp.Server, service AgentService) error {
 	})
 	mcp.AddTool(server, &mcp.Tool{
 		Name: ToolAgentExchange,
-		Description: "Submit structured completion/tool-call responses and optional progress, then receive queued or resumed requests. " +
+		Description: "Submit final responses, request-scoped progress and optional stream_chunks, then receive queued or resumed requests. " +
 			"delivery greater than one is the same request_id redelivered. Retryable parse/tool errors return error_detail and leave the request recoverable. " +
-			"Heartbeat is runtime-owned; no_request only means the bounded exchange wait produced no request. File and image transfer are not supported.",
+			"Heartbeat renews bridge liveness only; progress/stream/delivery/response renew request activity while a hard lifetime never extends. " +
+			"Inline images are paired with ordered image_ref content parts and emitted as native MCP ImageContent with original bytes and MIME type; generic files remain unsupported.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input AgentExchangeInput) (*mcp.CallToolResult, AgentExchangeOutput, error) {
 		if input.Capacity < 0 {
 			return nil, AgentExchangeOutput{}, errors.New("AGENT_EXCHANGE_INPUT_INVALID")
@@ -145,7 +180,24 @@ func RegisterAgent(server *mcp.Server, service AgentService) error {
 		if err != nil {
 			return nil, output, err
 		}
-		return nil, output, nil
+		result := &mcp.CallToolResult{}
+		for _, request := range output.Requests {
+			for _, item := range request.ContentItems {
+				if item.Metadata.Kind != "image" {
+					return nil, AgentExchangeOutput{}, errors.New("AGENT_IMAGE_ATTACHMENT_REQUIRED")
+				}
+				ref := item.Metadata.Ref
+				if ref == "" {
+					ref = item.Metadata.Name
+				}
+				uri := "cwapi://agent/" + url.PathEscape(request.RequestID) + "/" + url.PathEscape(ref) + "/" + url.PathEscape(item.Metadata.Name)
+				result.Content = append(result.Content, attachments.MCPContent(item, "request_id="+request.RequestID+" ref="+ref, uri)...)
+			}
+		}
+		if len(result.Content) == 0 {
+			return nil, output, nil
+		}
+		return result, output, nil
 	})
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        ToolAgentClose,

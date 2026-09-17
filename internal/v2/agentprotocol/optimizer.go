@@ -13,9 +13,9 @@ type OptimizationReport struct {
 
 type ContextOptimizer struct{}
 
-func NewContextOptimizer() ContextOptimizer { return ContextOptimizer{} }
+func NewContextOptimizer() *ContextOptimizer { return &ContextOptimizer{} }
 
-func (ContextOptimizer) Optimize(input Conversation) (Conversation, OptimizationReport, error) {
+func (o *ContextOptimizer) Optimize(input Conversation) (Conversation, OptimizationReport, error) {
 	output := Conversation{
 		Model: strings.TrimSpace(input.Model), ToolChoice: input.ToolChoice,
 		ResponseFormat: input.ResponseFormat, Stream: input.Stream,
@@ -23,8 +23,8 @@ func (ContextOptimizer) Optimize(input Conversation) (Conversation, Optimization
 	if output.Model == "" {
 		output.Model = DefaultModel
 	}
-	output.Tools = cloneTools(input.Tools)
 	report := OptimizationReport{}
+	output.Tools = cloneTools(input.Tools)
 	if len(input.Metadata) > 0 {
 		output.Metadata = make(map[string]any, len(input.Metadata))
 		for key, value := range input.Metadata {
@@ -68,15 +68,42 @@ func safelyDeduplicable(message Message) bool {
 }
 
 func messagesEqual(left, right Message) bool {
-	leftJSON, leftErr := json.Marshal(left)
-	rightJSON, rightErr := json.Marshal(right)
-	return leftErr == nil && rightErr == nil && string(leftJSON) == string(rightJSON)
+	if left.Role != right.Role || left.Content != right.Content || left.Name != right.Name || !contentPartsEqual(left.Parts, right.Parts) {
+		return false
+	}
+	if (left.ToolResult == nil) != (right.ToolResult == nil) {
+		return false
+	}
+	if left.ToolResult != nil {
+		if left.ToolResult.CallID != right.ToolResult.CallID || left.ToolResult.Name != right.ToolResult.Name || left.ToolResult.Content != right.ToolResult.Content || !contentPartsEqual(left.ToolResult.Parts, right.ToolResult.Parts) {
+			return false
+		}
+	}
+	return len(left.ToolCalls) == 0 && len(right.ToolCalls) == 0
+}
+
+func contentPartsEqual(left, right []ContentPart) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
 }
 
 func cloneMessage(input Message) Message {
 	output := input
+	if len(input.Parts) > 0 {
+		output.Parts = append([]ContentPart(nil), input.Parts...)
+	}
 	if input.ToolResult != nil {
 		result := *input.ToolResult
+		if len(input.ToolResult.Parts) > 0 {
+			result.Parts = append([]ContentPart(nil), input.ToolResult.Parts...)
+		}
 		output.ToolResult = &result
 	}
 	if len(input.ToolCalls) > 0 {

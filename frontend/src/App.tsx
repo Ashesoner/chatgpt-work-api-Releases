@@ -1,14 +1,20 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  ActivateAgentTunnelProfile,
+  ActivateCodingTunnelProfile,
   AgentCredential,
-  ClearAgentOpenAITunnel,
-  ClearOpenAITunnel,
-  ConfigureAgentOpenAITunnel,
-  ConfigureOpenAITunnel,
+  AgentTunnelProfiles,
+  CodingTunnelProfiles,
   ConnectionInfo,
+  DeactivateAgentTunnelProfile,
+  DeactivateCodingTunnelProfile,
+  DeleteAgentTunnelProfile,
+  DeleteCodingTunnelProfile,
   DeleteWorkspace,
   RegenerateAgentAPIKey,
   RuntimeSnapshot,
+  SaveAgentTunnelProfile,
+  SaveCodingTunnelProfile,
   SetAgentEnabled,
   UpdateCodexAccessProfile,
   UpdateCodexNetworkAccess,
@@ -17,6 +23,7 @@ import {
 import { WindowHide } from "../wailsjs/runtime/runtime";
 
 type Page = "coding" | "agent";
+type AgentRequestState = { request_id: string; task_id?: string; correlation_id?: string; state?: string; progress?: string; last_activity?: string; hard_deadline_at?: string };
 type Snapshot = {
   state: string;
   mcp?: { state?: string; address?: string; error?: string };
@@ -28,7 +35,7 @@ type Snapshot = {
   workspaces?: { repository_count?: number; repositories?: string[]; invalid_entries?: number };
   agent_enabled?: boolean;
   agent_provider?: { state?: string; address?: string; last_error?: string };
-  agent?: { bridge_state?: string; pending?: number; claimed?: number; active?: number; completed?: number; revision?: number; idle_count?: number; last_state?: string; last_error?: string };
+  agent?: { bridge_state?: string; pending?: number; claimed?: number; active?: number; completed?: number; revision?: number; idle_count?: number; last_state?: string; last_error?: string; last_progress?: string; image_bytes?: number; requests?: AgentRequestState[] };
   openai_tunnel?: TunnelSnapshot;
   agent_openai_tunnel?: TunnelSnapshot;
   last_error?: string;
@@ -36,6 +43,7 @@ type Snapshot = {
 type Connections = { coding_mcp?: string; agent_mcp?: string; agent_provider?: string };
 type TunnelInfo = { enabled?: boolean; tunnel_id?: string; api_key_present?: boolean; state?: string; last_error?: string };
 type TunnelSnapshot = Omit<TunnelInfo, "enabled"> & { configured?: boolean };
+type TunnelProfile = { id: string; name: string; tunnel_id: string; api_key_present: boolean; active: boolean; state: string };
 type ConfirmState = {
   title: string;
   description: string;
@@ -110,10 +118,8 @@ export default function App() {
   const [connections, setConnections] = useState<Connections>({});
   const [codingTunnel, setCodingTunnel] = useState<TunnelInfo>({});
   const [agentTunnel, setAgentTunnel] = useState<TunnelInfo>({});
-  const [codingTunnelID, setCodingTunnelID] = useState("");
-  const [codingTunnelKey, setCodingTunnelKey] = useState("");
-  const [agentTunnelID, setAgentTunnelID] = useState("");
-  const [agentTunnelKey, setAgentTunnelKey] = useState("");
+  const [codingProfiles, setCodingProfiles] = useState<TunnelProfile[]>([]);
+  const [agentProfiles, setAgentProfiles] = useState<TunnelProfile[]>([]);
   const [working, setWorking] = useState(false);
   const [workspaceManagerOpen, setWorkspaceManagerOpen] = useState(false);
   const [confirmState, setConfirmState] = useState<ConfirmState | null>(null);
@@ -134,9 +140,11 @@ export default function App() {
       try {
         do {
           refreshPending.current = false;
-          const [nextValue, endpoints] = await Promise.all([
+          const [nextValue, endpoints, nextCodingProfiles, nextAgentProfiles] = await Promise.all([
             RuntimeSnapshot(),
             ConnectionInfo(),
+            CodingTunnelProfiles(),
+            AgentTunnelProfiles(),
           ]);
           const next = nextValue as Snapshot;
           setSnapshot(next);
@@ -145,8 +153,8 @@ export default function App() {
           const nextAgent = normalizeTunnel(next.agent_openai_tunnel);
           setCodingTunnel(nextCoding);
           setAgentTunnel(nextAgent);
-          setCodingTunnelID((current) => current || nextCoding.tunnel_id || "");
-          setAgentTunnelID((current) => current || nextAgent.tunnel_id || "");
+          setCodingProfiles((nextCodingProfiles || []) as TunnelProfile[]);
+          setAgentProfiles((nextAgentProfiles || []) as TunnelProfile[]);
           setRefreshError("");
         } while (refreshPending.current);
       } finally {
@@ -213,46 +221,41 @@ export default function App() {
     }
   }
 
-  async function configureCodingTunnel() {
-    if (await action(() => ConfigureOpenAITunnel(codingTunnelID, codingTunnelKey), "Coding 隧道已连接")) {
-      setCodingTunnelKey("");
-    }
+  async function saveTunnelProfile(page: Page, profileID: string, name: string, tunnelID: string, apiKey: string) {
+    const run = page === "coding"
+      ? () => SaveCodingTunnelProfile(profileID, name, tunnelID, apiKey)
+      : () => SaveAgentTunnelProfile(profileID, name, tunnelID, apiKey);
+    return action(run, `${page === "coding" ? "Coding" : "Agent"} 账号已保存`);
   }
 
-  function clearCodingTunnel() {
+  async function activateTunnelProfile(page: Page, profileID: string) {
+    const run = page === "coding"
+      ? () => ActivateCodingTunnelProfile(profileID)
+      : () => ActivateAgentTunnelProfile(profileID);
+    return action(run, `${page === "coding" ? "Coding" : "Agent"} 账号已连接`);
+  }
+
+  async function deactivateTunnelProfile(page: Page) {
+    const run = page === "coding"
+      ? () => DeactivateCodingTunnelProfile()
+      : () => DeactivateAgentTunnelProfile();
+    return action(run, `${page === "coding" ? "Coding" : "Agent"} 账号已断开`);
+  }
+
+  function deleteTunnelProfile(page: Page, profile: TunnelProfile) {
+    const label = page === "coding" ? "Coding" : "Agent";
     askConfirmation({
-      title: "断开 Coding 隧道？",
-      description: "将断开 Coding 的 ChatGPT MCP 隧道，并从 Windows 凭据管理器删除对应 Runtime API key。",
-      confirmLabel: "断开隧道",
+      title: `删除 ${profile.name}？`,
+      description: `将从 ${label} 的账号列表中删除该账号及保存的 Runtime API key。${profile.active ? "当前连接也会断开。" : ""}`,
+      confirmLabel: "删除账号",
       onConfirm: async () => {
-        if (await action(() => ClearOpenAITunnel(), "Coding 隧道已断开")) {
-          setCodingTunnelID("");
-          setCodingTunnelKey("");
-        }
+        const run = page === "coding"
+          ? () => DeleteCodingTunnelProfile(profile.id)
+          : () => DeleteAgentTunnelProfile(profile.id);
+        await action(run, `${label} 账号已删除`);
       },
     });
   }
-
-  async function configureAgentTunnel() {
-    if (await action(() => ConfigureAgentOpenAITunnel(agentTunnelID, agentTunnelKey), "Agent 隧道已连接")) {
-      setAgentTunnelKey("");
-    }
-  }
-
-  function clearAgentTunnel() {
-    askConfirmation({
-      title: "断开 Agent 隧道？",
-      description: "将断开 Agent 的 ChatGPT MCP 隧道，并从 Windows 凭据管理器删除对应 Runtime API key。",
-      confirmLabel: "断开隧道",
-      onConfirm: async () => {
-        if (await action(() => ClearAgentOpenAITunnel(), "Agent 隧道已断开")) {
-          setAgentTunnelID("");
-          setAgentTunnelKey("");
-        }
-      },
-    });
-  }
-
   function deleteWorkspace(repository: string) {
     askConfirmation({
       title: "删除持久化工作区？",
@@ -285,7 +288,7 @@ export default function App() {
       <header className="titlebar">
         <div className="brand-row">
           <div className="logo">CW</div>
-          <div><strong>CWapi</strong><span>2.0.5</span></div>
+          <div><strong>CWapi</strong><span>2.0.6</span></div>
         </div>
         <button className="window-button" onClick={WindowHide} aria-label="缩小到托盘" title="缩小到托盘">×</button>
       </header>
@@ -299,18 +302,16 @@ export default function App() {
         {page === "coding" ? (
           <CodingPage
             snapshot={snapshot}
-            tunnel={codingTunnel}
-            tunnelID={codingTunnelID}
-            tunnelKey={codingTunnelKey}
+            profiles={codingProfiles}
             working={working}
             workspaces={workspaces}
             access={access}
             networkAccess={Boolean(snapshot.codex_network_access)}
             remoteGitRewrite={remoteGitRewrite}
-            onTunnelIDChange={setCodingTunnelID}
-            onTunnelKeyChange={setCodingTunnelKey}
-            onConfigureTunnel={configureCodingTunnel}
-            onClearTunnel={clearCodingTunnel}
+            onSaveProfile={(id, name, tunnelID, apiKey) => saveTunnelProfile("coding", id, name, tunnelID, apiKey)}
+            onActivateProfile={(id) => activateTunnelProfile("coding", id)}
+            onDeactivateProfile={() => deactivateTunnelProfile("coding")}
+            onDeleteProfile={(profile) => deleteTunnelProfile("coding", profile)}
             onAccessChange={(next) => void action(() => UpdateCodexAccessProfile(next), next === "safe" ? "Codex 已切换为安全模式" : "Codex 已切换为完整模式")}
             onNetworkAccessChange={(allowed) => void action(() => UpdateCodexNetworkAccess(allowed), allowed ? "Coding 网络访问已启用" : "Coding 网络访问已禁用")}
             onRemoteGitRewriteChange={changeRemoteGitRewrite}
@@ -320,16 +321,14 @@ export default function App() {
           <AgentPage
             snapshot={snapshot}
             connections={connections}
-            tunnel={agentTunnel}
-            tunnelID={agentTunnelID}
-            tunnelKey={agentTunnelKey}
+            profiles={agentProfiles}
             working={working}
             bridge={bridge}
             onCopy={copy}
-            onTunnelIDChange={setAgentTunnelID}
-            onTunnelKeyChange={setAgentTunnelKey}
-            onConfigureTunnel={configureAgentTunnel}
-            onClearTunnel={clearAgentTunnel}
+            onSaveProfile={(id, name, tunnelID, apiKey) => saveTunnelProfile("agent", id, name, tunnelID, apiKey)}
+            onActivateProfile={(id) => activateTunnelProfile("agent", id)}
+            onDeactivateProfile={() => deactivateTunnelProfile("agent")}
+            onDeleteProfile={(profile) => deleteTunnelProfile("agent", profile)}
             onEnabledChange={(enabled) => void action(() => SetAgentEnabled(enabled), enabled ? "Agent 已启用" : "Agent 已停用")}
             onCopyAgentKey={() => void copyAgentKey()}
             onRegenerateAgentKey={() => void action(() => RegenerateAgentAPIKey(), "Agent API 密钥已重新生成")}
@@ -366,20 +365,18 @@ function PageTab({ page, activePage, label, detail, status, onSelect }: { page: 
   );
 }
 
-function CodingPage({ snapshot, tunnel, tunnelID, tunnelKey, working, workspaces, access, networkAccess, remoteGitRewrite, onTunnelIDChange, onTunnelKeyChange, onConfigureTunnel, onClearTunnel, onAccessChange, onNetworkAccessChange, onRemoteGitRewriteChange, onOpenWorkspaceManager }: {
+function CodingPage({ snapshot, profiles, working, workspaces, access, networkAccess, remoteGitRewrite, onSaveProfile, onActivateProfile, onDeactivateProfile, onDeleteProfile, onAccessChange, onNetworkAccessChange, onRemoteGitRewriteChange, onOpenWorkspaceManager }: {
   snapshot: Snapshot;
-  tunnel: TunnelInfo;
-  tunnelID: string;
-  tunnelKey: string;
+  profiles: TunnelProfile[];
   working: boolean;
   workspaces: string[];
   access: string;
   networkAccess: boolean;
   remoteGitRewrite: boolean;
-  onTunnelIDChange: (value: string) => void;
-  onTunnelKeyChange: (value: string) => void;
-  onConfigureTunnel: () => Promise<void>;
-  onClearTunnel: () => void;
+  onSaveProfile: (id: string, name: string, tunnelID: string, apiKey: string) => Promise<boolean>;
+  onActivateProfile: (id: string) => Promise<boolean>;
+  onDeactivateProfile: () => Promise<boolean>;
+  onDeleteProfile: (profile: TunnelProfile) => void;
   onAccessChange: (value: string) => void;
   onNetworkAccessChange: (allowed: boolean) => void;
   onRemoteGitRewriteChange: (allowed: boolean) => void;
@@ -387,7 +384,7 @@ function CodingPage({ snapshot, tunnel, tunnelID, tunnelKey, working, workspaces
 }) {
   return (
     <>
-      <TunnelCard page="coding" tunnel={tunnel} tunnelID={tunnelID} tunnelKey={tunnelKey} working={working} onTunnelIDChange={onTunnelIDChange} onTunnelKeyChange={onTunnelKeyChange} onConfigure={onConfigureTunnel} onClear={onClearTunnel} />
+      <TunnelAccountsCard page="coding" profiles={profiles} working={working} onSave={onSaveProfile} onActivate={onActivateProfile} onDeactivate={onDeactivateProfile} onDelete={onDeleteProfile} />
       <section className="card">
         <div className="card-title"><span>CODEX</span><span className={`pill small ${statusClass(snapshot.codex?.state)}`}>{stateLabel(snapshot.codex?.state)}</span></div>
         <div className="segmented">
@@ -409,26 +406,24 @@ function CodingPage({ snapshot, tunnel, tunnelID, tunnelKey, working, workspaces
   );
 }
 
-function AgentPage({ snapshot, connections, tunnel, tunnelID, tunnelKey, working, bridge, onCopy, onTunnelIDChange, onTunnelKeyChange, onConfigureTunnel, onClearTunnel, onEnabledChange, onCopyAgentKey, onRegenerateAgentKey }: {
+function AgentPage({ snapshot, connections, profiles, working, bridge, onCopy, onSaveProfile, onActivateProfile, onDeactivateProfile, onDeleteProfile, onEnabledChange, onCopyAgentKey, onRegenerateAgentKey }: {
   snapshot: Snapshot;
   connections: Connections;
-  tunnel: TunnelInfo;
-  tunnelID: string;
-  tunnelKey: string;
+  profiles: TunnelProfile[];
   working: boolean;
   bridge: string;
   onCopy: (value?: string, label?: string) => void | Promise<void>;
-  onTunnelIDChange: (value: string) => void;
-  onTunnelKeyChange: (value: string) => void;
-  onConfigureTunnel: () => Promise<void>;
-  onClearTunnel: () => void;
+  onSaveProfile: (id: string, name: string, tunnelID: string, apiKey: string) => Promise<boolean>;
+  onActivateProfile: (id: string) => Promise<boolean>;
+  onDeactivateProfile: () => Promise<boolean>;
+  onDeleteProfile: (profile: TunnelProfile) => void;
   onEnabledChange: (enabled: boolean) => void;
   onCopyAgentKey: () => void;
   onRegenerateAgentKey: () => void;
 }) {
   return (
     <>
-      <TunnelCard page="agent" tunnel={tunnel} tunnelID={tunnelID} tunnelKey={tunnelKey} working={working} onTunnelIDChange={onTunnelIDChange} onTunnelKeyChange={onTunnelKeyChange} onConfigure={onConfigureTunnel} onClear={onClearTunnel} />
+      <TunnelAccountsCard page="agent" profiles={profiles} working={working} onSave={onSaveProfile} onActivate={onActivateProfile} onDeactivate={onDeactivateProfile} onDelete={onDeleteProfile} />
       <section className="card">
         <div className="card-title"><span>AGENT 服务</span><label className="switch"><input type="checkbox" aria-label="启用 Agent 服务" checked={Boolean(snapshot.agent_enabled)} disabled={working} onChange={(event) => onEnabledChange(event.target.checked)} /><span /></label></div>
         <StatRow label="服务提供商" value={stateLabel(snapshot.agent_provider?.state || "disabled")} status={snapshot.agent_provider?.state} />
@@ -438,6 +433,13 @@ function AgentPage({ snapshot, connections, tunnel, tunnelID, tunnelKey, working
           <Metric label="已领取" value={snapshot.agent?.claimed ?? 0} />
           <Metric label="已完成" value={snapshot.agent?.completed ?? 0} />
         </div>
+        {(snapshot.agent?.requests || []).length > 0 && <div className="agent-request-list" aria-label="Agent 活动请求">
+          {(snapshot.agent?.requests || []).slice(0, 4).map((request) => <div className="agent-request" key={request.request_id}>
+            <div className="agent-request-head"><code>{request.task_id || request.request_id}</code><span className={`pill small ${statusClass(request.state)}`}>{stateLabel(request.state)}</span></div>
+            {request.progress && <small>{request.progress}</small>}
+          </div>)}
+        </div>}
+        {(snapshot.agent?.image_bytes ?? 0) > 0 && <StatRow label="图片内存" value={`${Math.ceil((snapshot.agent?.image_bytes || 0) / 1024 / 1024)} MiB`} />}
         {snapshot.agent_enabled && <EndpointRow label="服务提供商地址" value={connections.agent_provider || "启动中…"} onCopy={() => onCopy(connections.agent_provider, "服务提供商地址已复制")} />}
         <div className="actions">
           <button disabled={working || !snapshot.agent_enabled} onClick={onCopyAgentKey}>复制 API 密钥</button>
@@ -448,29 +450,85 @@ function AgentPage({ snapshot, connections, tunnel, tunnelID, tunnelKey, working
   );
 }
 
-function TunnelCard({ page, tunnel, tunnelID, tunnelKey, working, onTunnelIDChange, onTunnelKeyChange, onConfigure, onClear }: { page: Page; tunnel: TunnelInfo; tunnelID: string; tunnelKey: string; working: boolean; onTunnelIDChange: (value: string) => void; onTunnelKeyChange: (value: string) => void; onConfigure: () => Promise<void>; onClear: () => void }) {
+function TunnelAccountsCard({ page, profiles, working, onSave, onActivate, onDeactivate, onDelete }: {
+  page: Page;
+  profiles: TunnelProfile[];
+  working: boolean;
+  onSave: (id: string, name: string, tunnelID: string, apiKey: string) => Promise<boolean>;
+  onActivate: (id: string) => Promise<boolean>;
+  onDeactivate: () => Promise<boolean>;
+  onDelete: (profile: TunnelProfile) => void;
+}) {
   const label = page === "coding" ? "Coding" : "Agent";
+  const [editingID, setEditingID] = useState("");
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [name, setName] = useState("");
+  const [tunnelID, setTunnelID] = useState("");
+  const [apiKey, setAPIKey] = useState("");
+  const editing = profiles.find((profile) => profile.id === editingID);
+
+  function resetEditor() {
+    setEditorOpen(false);
+    setEditingID("");
+    setName("");
+    setTunnelID("");
+    setAPIKey("");
+  }
+
+  function beginAdd() {
+    setEditingID("");
+    setName(`账号 ${profiles.length + 1}`);
+    setTunnelID("");
+    setAPIKey("");
+    setEditorOpen(true);
+  }
+
+  function beginEdit(profile: TunnelProfile) {
+    setEditingID(profile.id);
+    setName(profile.name);
+    setTunnelID(profile.tunnel_id);
+    setAPIKey("");
+    setEditorOpen(true);
+  }
+
+  async function save() {
+    if (await onSave(editingID, name, tunnelID, apiKey)) resetEditor();
+  }
+
   return (
     <section className="card">
-      <div className="card-title"><span>CHATGPT MCP 隧道</span><span className="pill small ok">{label} 独立链路</span></div>
-      <TunnelPanel label={label} info={tunnel} working={working} tunnelID={tunnelID} tunnelKey={tunnelKey} onTunnelIDChange={onTunnelIDChange} onTunnelKeyChange={onTunnelKeyChange} onConfigure={onConfigure} onClear={onClear} />
+      <div className="card-title"><span>CHATGPT MCP 账号</span><span className="pill small ok">{label} 单账号连接</span></div>
+      <div className="account-list">
+        {profiles.length === 0 && <div className="empty account-empty">暂无已保存账号。</div>}
+        {profiles.map((profile) => (
+          <div className={`account-item ${profile.active ? "active" : ""}`} key={profile.id} aria-label={`${label} 账号 ${profile.name}`}>
+            <div className="account-main">
+              <div className="account-name"><strong>{profile.name}</strong><span className={`pill small ${profile.active ? statusClass(profile.state) : "muted"}`}>{profile.active ? stateLabel(profile.state) : "已保存"}</span></div>
+              <code title={profile.tunnel_id}>{profile.tunnel_id}</code>
+            </div>
+            <div className="account-actions">
+              {profile.active
+                ? <button disabled={working} onClick={() => void onDeactivate()}>断开</button>
+                : <button disabled={working || !profile.api_key_present} onClick={() => void onActivate(profile.id)}>连接</button>}
+              <button disabled={working} onClick={() => beginEdit(profile)}>编辑</button>
+              <button disabled={working} className="danger-text" onClick={() => onDelete(profile)}>删除</button>
+            </div>
+          </div>
+        ))}
+      </div>
+      {!editorOpen && <button className="text-button account-add" disabled={working} onClick={beginAdd}>+ 添加 {label} 账号</button>}
+      {editorOpen && (
+        <div className="account-editor">
+          <div className="tunnel-panel-title"><strong>{editing ? `编辑 ${editing.name}` : `添加 ${label} 账号`}</strong><button className="editor-close" disabled={working} onClick={resetEditor}>取消</button></div>
+          <input className="tunnel-input" aria-label={`${label} 账号名称`} value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：GPT A" autoComplete="off" />
+          <input className="tunnel-input" aria-label={`${label} 隧道 ID`} value={tunnelID} onChange={(event) => setTunnelID(event.target.value)} placeholder="tunnel_…" autoComplete="off" />
+          <input className="tunnel-input" aria-label={`${label} Runtime API key`} type="password" value={apiKey} onChange={(event) => setAPIKey(event.target.value)} placeholder={editing?.api_key_present ? "留空则保留已保存密钥" : "sk-…"} autoComplete="new-password" />
+          <div className="actions"><button disabled={working || !name.trim() || !tunnelID.trim() || (!editing?.api_key_present && !apiKey)} onClick={() => void save()}>保存 {label} 账号</button></div>
+        </div>
+      )}
     </section>
   );
 }
-
-function TunnelPanel({ label, info, working, tunnelID, tunnelKey, onTunnelIDChange, onTunnelKeyChange, onConfigure, onClear }: { label: string; info: TunnelInfo; working: boolean; tunnelID: string; tunnelKey: string; onTunnelIDChange: (value: string) => void; onTunnelKeyChange: (value: string) => void; onConfigure: () => Promise<void>; onClear: () => void }) {
-  const enabled = Boolean(info.enabled);
-  const state = info.state || (enabled ? "starting" : "disabled");
-  return (
-    <div className="tunnel-panel">
-      <div className="tunnel-panel-title"><strong>{label} 插件</strong><span className={`pill small ${statusClass(state)}`}>{stateLabel(state)}</span></div>
-      <input className="tunnel-input" aria-label={`${label} 隧道 ID`} value={tunnelID} onChange={(event) => onTunnelIDChange(event.target.value)} placeholder="tunnel_…" autoComplete="off" />
-      <input className="tunnel-input" aria-label={`${label} Runtime API key`} type="password" value={tunnelKey} onChange={(event) => onTunnelKeyChange(event.target.value)} placeholder={info.api_key_present ? "Runtime API key 已保存" : "sk-…"} autoComplete="new-password" />
-      <div className="actions"><button disabled={working || !tunnelID || !tunnelKey} onClick={() => void onConfigure()}>保存并连接 {label}</button><button disabled={working || !enabled} onClick={onClear}>断开 {label} 隧道</button></div>
-    </div>
-  );
-}
-
 function WorkspaceManager({ snapshot, workspaces, working, onClose, onDelete }: { snapshot: Snapshot; workspaces: string[]; working: boolean; onClose: () => void; onDelete: (repository: string) => void }) {
   return (
     <div className="overlay" role="dialog" aria-modal="true" aria-label="工作区管理">

@@ -1,4 +1,4 @@
-# Getting Started with CWapi 2.0
+﻿# Getting Started with CWapi 2.0
 
 [English](GETTING_STARTED.md) | [简体中文](GETTING_STARTED.zh-CN.md)
 
@@ -11,13 +11,15 @@ Coding: ChatGPT Web -> Secure MCP Tunnel -> Coding MCP -> local Git workspace
 Agent:  local OpenAI-compatible client -> CWapi /v1 -> Agent MCP -> Secure MCP Tunnel -> ChatGPT Web
 ```
 
-## 1. Download CWapi 2.0.5
+## 1. Download CWapi 2.0.6
 
 Download the official Windows portable:
 
-[`CWapi-v2.0.5.zip`](https://github.com/AAAYNMMM/chatgpt-work-api-Releases/releases/download/v2.0.5/CWapi-v2.0.5.zip)
+[`CWapi-v2.0.6.zip`](https://github.com/AAAYNMMM/chatgpt-work-api-Releases/releases/download/v2.0.6/CWapi-v2.0.6.zip)
 
 Fully extract the ZIP into a directory your Windows user can write to. Do not run `CWapi.exe` from inside the ZIP and do not copy only the executable; the portable includes pinned Git, Codex toolhost, and tunnel runtime files beside it.
+
+If you are upgrading from 2.0.5, exit CWapi first, then extract 2.0.6 directly over the existing 2.0.5 directory and allow overwrite. The release ZIP does not include CWapi-data, so the existing local data directory is preserved.
 
 Then run:
 
@@ -127,6 +129,7 @@ The goal is simple regardless of UI wording:
 coding_open
 coding_exec
 coding_status
+coding_attachment
 coding_close
 load_skill
 ```
@@ -254,9 +257,9 @@ CWapi returns Chat Completions response to local software
 
 If the local client receives 503, the Agent MCP bridge is not available/open. If it receives 429, the bounded queue is busy. If Web GPT does not complete the request before the default 180-second request timeout, the Provider returns 504.
 
-## 14. Files and media are not transported
+## 14. Files and images
 
-Coding MCP has no file/image transfer tool. Agent accepts text and tool JSON only: top-level `attachments` returns `AGENT_FILE_ATTACHMENTS_UNSUPPORTED`, while any non-text message content part such as `image_url` returns `AGENT_MEDIA_INPUT_UNSUPPORTED`.
+Ordinary file transfer remains disabled. Coding can return bounded raster images through `coding_attachment`, preserving original bytes/MIME. Agent accepts bounded inline raster images through `data:` `image_url` parts or CWapi inline image attachments; remote image URLs, SVG, and generic files remain unsupported.
 
 A file uploaded into the ChatGPT conversation is not copied into local software or the Coding workspace.
 
@@ -266,3 +269,7 @@ A file uploaded into the ChatGPT conversation is not copied into local software 
 - [Agent Guide](AGENT_GUIDE.md)
 - [FAQ](FAQ.md)
 - [Troubleshooting](TROUBLESHOOTING.md)
+
+
+
+

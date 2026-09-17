@@ -1,4 +1,4 @@
-# CWapi 2.0 Agent Guide
+﻿# CWapi 2.0 Agent Guide
 
 [English](AGENT_GUIDE.md) | [简体中文](AGENT_GUIDE.zh-CN.md)
 
@@ -191,32 +191,17 @@ A completed response can return normal assistant content. CWapi normalizes the A
 
 Both non-streaming and streaming requests are supported. Streaming responses are emitted as Chat Completions SSE chunks and finish with `[DONE]`.
 
-## Files and media are not supported
+## Files and images
 
-Agent accepts text and tool JSON only. CWapi rejects a top-level attachment extension such as:
+Agent accepts text, tool JSON, and bounded inline raster images.
 
-```json
-{"attachments": [...]}
-```
+- Standard Chat Completions `image_url` parts support inline `data:` raster images only; remote `http(s)` image URLs return `AGENT_IMAGE_URL_UNSUPPORTED`.
+- CWapi's top-level `attachments` extension accepts inline images only; non-image attachments return `AGENT_IMAGE_ATTACHMENT_REQUIRED`.
+- Generic files such as text files, PDFs, archives, Office documents, and SVG are not exposed as MCP resources.
+- `agent_exchange` returns matching image metadata plus native MCP `ImageContent` with the original bytes/MIME. CWapi does not recompress, resize, transcode, or OCR images.
+- Images are request-scoped and bounded; the broker also enforces a 64 MiB global raw-image budget.
 
-with:
-
-```text
-AGENT_FILE_ATTACHMENTS_UNSUPPORTED
-```
-
-Text files, PDFs, archives, office documents, and other generic files are not converted into MCP resources for Agent.
-
-Any non-text Chat Completions message content part, including `image_url`, is rejected before broker admission with:
-
-```text
-AGENT_MEDIA_INPUT_UNSUPPORTED
-```
-
-`agent_exchange` emits JSON request/result content only and never returns MCP files, resources, or images.
-
-An image/file uploaded to the ChatGPT conversation also has **no reverse path** into the local OpenAI-compatible client. If the local client needs data, it must provide that data through its own supported Chat Completions messages/tools.
-
+An image/file uploaded manually to the ChatGPT conversation still has **no reverse path** into the local OpenAI-compatible client.
 ## `agent_close`
 
 Call `agent_close()` when the continuous Agent task is truly finished.
@@ -339,3 +324,4 @@ This is different from the **Agent Tunnel Runtime API key**, which is stored in 
 - [Troubleshooting](TROUBLESHOOTING.md)
 - [Protocol](PROTOCOL.md)
 - [Security](SECURITY.md)
+

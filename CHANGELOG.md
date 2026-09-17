@@ -1,6 +1,25 @@
-# Changelog
+﻿# Changelog
 
-## 2.0.5 — 2026-09-02 — Current implementation
+## 2.0.6 — 2026-09-17 — Current implementation
+
+2.0.6 聚焦简单、稳定与高效，并在 2.0.5 基础上补齐图片与多账号能力：
+
+- Coding/Agent 支持独立保存多个 Tunnel 账号并一键热切换；切换账号不会隔离或复制本地 workspace；
+- Coding 新增 `coding_attachment`，Agent 支持 inline raster image；图片保持原始 bytes/MIME，不压缩、不缩放、不转码、不 OCR，普通文件仍不传输；
+- Agent request 生命周期拆分为 bridge lease、activity timeout 与不可延长 hard lifetime，并加入 per-request progress、受限真流式 SSE 与 stream/final 一致性校验；
+- Agent broker/Context Optimizer 减少重复索引、计数、缓存和共享状态，降低隐藏副作用与锁复杂度；
+- Coding persistent process 支持 stdout/stderr absolute cursor 增量读取，`coding_status` 展示 active process 摘要且不暴露 argv；durable resume 会刷新 Git truth；
+- persistent command proxy 改为 `main()` 显式入口；config schema 保持 `cwapi.config.v3`，有效 2.0.4/2.0.5 配置可原子迁移到 2.0.6。
+
+从 2.0.5 升级时，可以先退出 CWapi，然后把 `CWapi-v2.0.6.zip` **直接解压到原 2.0.5 目录并允许覆盖**。发行包不包含 `CWapi-data`，现有本地数据目录会保留。
+
+发行包对应开发仓库源码提交：
+
+```text
+952c07b4d3976089587c0e34ff1f8c1fbba11648
+```
+
+## 2.0.5 — 2026-09-02 — Previous implementation
 
 2.0.5 聚焦 Agent 长任务可靠性、提示词分层和开发运行时回归：
 
@@ -112,3 +131,4 @@ d904ae80428c90717e050a151c65fa35b6b83c63
 ## 1.6.x
 
 1.6.3 及更早发行仍保留在 `1.6.x` 分支和已有 GitHub Releases 中。2.x 与 1.6.x 不共享同一工作流或配置结构。
+

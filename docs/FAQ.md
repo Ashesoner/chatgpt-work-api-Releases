@@ -1,4 +1,4 @@
-# CWapi 2.0 FAQ
+﻿# CWapi 2.0 FAQ
 
 [English](FAQ.md) | [简体中文](FAQ.zh-CN.md)
 
@@ -148,11 +148,11 @@ Before upgrading, close active sessions and back up important unpushed work.
 
 ## Can Coding MCP transfer files or images?
 
-No. The formal Coding catalog contains only `coding_open`, `coding_exec`, `coding_status`, and `coding_close`. Source, Markdown, JSON, logs, and other text can be inspected with bounded `coding_exec` commands; Coding MCP emits neither `ImageContent` nor `EmbeddedResource`.
+Raster images: yes. Ordinary files: no. The Coding catalog includes `coding_attachment`, which reads bounded raster images from the active workspace and emits native `ImageContent` with original bytes/MIME. Source, Markdown, JSON, logs, and other text still use bounded `coding_exec` commands; generic files are not emitted as `EmbeddedResource`.
 
 ## Can Agent accept files or images?
 
-No. Agent accepts text and tool JSON only. A top-level `attachments` field returns `AGENT_FILE_ATTACHMENTS_UNSUPPORTED`; any non-text message content part, including `image_url`, returns `AGENT_MEDIA_INPUT_UNSUPPORTED` before broker admission.
+Raster images: yes. Generic files: no. Agent accepts inline raster images through `data:` `image_url` parts and CWapi inline image attachments. Remote image URLs, SVG, PDFs, archives, Office files, and other generic files remain unsupported.
 
 ## Does uploading a file to the ChatGPT conversation copy it into my local workspace/client?
 
@@ -229,3 +229,4 @@ See [Agent Guide](AGENT_GUIDE.md) for request, streaming, tool-call, and error b
 - [Version Guide](VERSION_GUIDE.md)
 - [Migration from 1.6](MIGRATION_FROM_1.6.md)
 - [Security](SECURITY.md)
+

@@ -9,8 +9,9 @@ import (
 
 const (
 	Schema          = "cwapi.config.v3"
-	Version         = "2.0.5"
-	previousVersion = "2.0.4"
+	Version         = "2.0.6"
+	previousVersion = "2.0.5"
+	olderVersion    = "2.0.4"
 
 	DefaultMCPPort   = 32124
 	DefaultAgentPort = 32123

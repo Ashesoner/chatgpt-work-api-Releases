@@ -47,9 +47,9 @@ Web GPT
   -> edit/test/commit/push result
 ```
 
-Coding MCP 对外暴露五个工具：`coding_open`、`coding_exec`、`coding_status`、`coding_close`、`load_skill`。
+Coding MCP 对外暴露六个工具：`coding_open`、`coding_exec`、`coding_status`、`coding_attachment`、`coding_close`、`load_skill`。
 
-Coding 不提供文件或图片 MCP 传输。文本、源码、JSON、日志等需要的 workspace 内容通过 exact `coding_exec` 获取。
+Coding 通过 `coding_attachment` 提供 image-only MCP 传输：active workspace 内受限栅格图片以原生 `ImageContent` 返回并保持原始 bytes/MIME，不压缩、不缩放、不转码、不 OCR。普通文件仍不传输；文本、源码、JSON、日志等内容通过 exact `coding_exec` 获取。
 
 一个 repository 同时最多一个 active coding handle。首次使用 clone，后续 fetch；`expected_commit` 如提供则必须是目标 ref 解析出的完整 SHA。新任务遇到 tracked dirty 会拒绝，`resume=true` 可保留工作树继续。
 
@@ -83,9 +83,9 @@ local software
   -> local tool result -> next OpenAI request
 ```
 
-`internal/v2/agentprotocol` remains the formal external-protocol boundary. 2.0.5 adds stream argument assembly so tool-call argument deltas are accumulated completely before one canonical JSON parse.
+`internal/v2/agentprotocol` remains the formal external-protocol boundary. The current implementation assembles tool-call argument deltas completely before one canonical JSON parse. The Context Optimizer is stateless and deterministic: tool schemas are cloned directly rather than kept in a shared cache.
 
-Broker request and bridge lifetimes are separate. Request states include `QUEUED / CLAIMED / RUNNING / WAITING_TOOL / COMPLETED / FAILED_RETRYABLE / FAILED_FINAL`; old pending/inflight/claimed fields remain additive compatibility views. Runtime heartbeat renews active request liveness independently from Web GPT natural-language output and does not masquerade as business progress.
+Broker request and bridge lifetimes are separate. Request states include `QUEUED / CLAIMED / RUNNING / WAITING_TOOL / COMPLETED / FAILED_RETRYABLE / FAILED_FINAL`; old pending/inflight/claimed fields remain additive compatibility views. Runtime heartbeat renews bridge lease only. Request activity is renewed only by delivery/progress/stream/response and is capped by a non-extendable hard lifetime.
 
 Bridge close/stale detaches active requests instead of final-failing them. Reopen creates/reuses a valid bridge generation, rebinds preserved requests, and redelivers the same `request_id` with `delivery++` plus resume metadata. Operations bound to an old generation remain stale and cannot complete a request through the new generation.
 
@@ -93,9 +93,9 @@ Tool-call parse/mapping errors carry structured retryable identity and move the 
 
 A brand-new OpenAI request still requires an active bridge and fails fast with HTTP 503 while offline. This keeps client behavior compatible while allowing already-existing work to survive bridge interruption.
 
-Exchange output separates heartbeat, progress, tool_call, tool_result, completion and error concepts and exposes `queued_requests/active_requests`, heartbeat/progress observations and lifecycle/resume timing alongside legacy activity fields. `no_request` continues to mean only bounded wait timeout without a new local OpenAI request.
+Exchange output separates heartbeat, progress, stream, tool_call, tool_result, completion and error concepts. Per-request progress/last-activity/hard-deadline plus global image bytes are exposed alongside legacy counters. `progress`/`stream_chunks` without a final response return immediate `state=activity`; `no_request` continues to mean only bounded wait timeout without a new local OpenAI request.
 
-Agent accepts text/tool JSON only; files/images remain rejected before broker admission. Current SSE keeps transport keepalive and buffered completion encoding; it does not claim token-level realtime streaming.
+Agent Adapter parses each external request once. Text/tool data and ordered `image_ref` parts enter canonical state together; original image bytes remain request-scoped in memory under a 64 MiB broker-wide budget and are emitted as native `ImageContent` without recompression, resizing or transcoding. SSE supports incremental `stream_chunks` forwarding plus buffered fallback; a final response must canonical-match any chunks already emitted.
 
 ## 启动与重配置
 

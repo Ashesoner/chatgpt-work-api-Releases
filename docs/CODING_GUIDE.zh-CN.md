@@ -1,4 +1,4 @@
-# CWapi 2.0 Coding 指南
+﻿# CWapi 2.0 Coding 指南
 
 [English](CODING_GUIDE.md) | [简体中文](CODING_GUIDE.zh-CN.md)
 
@@ -28,7 +28,9 @@ portable 内置 Codex runtime **不是第二个 coding agent**。CWapi 只使用
 coding_open
 coding_exec
 coding_status
+coding_attachment
 coding_close
+load_skill
 ```
 
 Web GPT 不会拿到、也不需要保存公开 Coding session ID。后续所有调用都继续用同一个 canonical `repository_url` 定位 CWapi 内部 active session。
@@ -204,7 +206,7 @@ git show HEAD:path/to/file
 
 源码、Markdown、JSON、配置、日志和其它可读文本都通过 `coding_exec` 读取。
 
-Coding MCP 没有文件或图片传输工具，也不会产生 MCP `ImageContent` 或 `EmbeddedResource` content。
+Coding MCP 不传普通文件。`coding_attachment` 只读取 active workspace 内受限栅格图片，并以原生 MCP `ImageContent` 返回原始 bytes/MIME；不压缩、不缩放、不转码、不 OCR。
 
 大文件优先读取相关范围、带少量上下文的搜索命中或项目自己的 query，没必要把整个文件拖进对话，只因为字节很多看起来很努力。
 
@@ -298,7 +300,7 @@ private repository 的 clone/fetch/push 使用当前 Windows 用户已有的 Git
 
 ## 文件与图片
 
-Coding MCP 不传输文件或图片。源码、Markdown、JSON、配置、日志等文本通过有界 `coding_exec` 精确读取；二进制文件和图片留在 workspace，不会被复制进 ChatGPT 对话。
+Coding MCP 只通过 `coding_attachment` 传输受限栅格图片，普通文件仍不支持。源码、Markdown、JSON、配置、日志等文本继续通过有界 `coding_exec` 精确读取；支持的图片以原生 `ImageContent` 返回原始 bytes/MIME，不压缩、不缩放、不转码、不 OCR。
 
 ## Close 与以后 resume
 
@@ -346,3 +348,6 @@ close 只会：
 - [故障排查](TROUBLESHOOTING.zh-CN.md)
 - [Codex Toolhost](CODEX_TOOLHOST.md)
 - [Protocol](PROTOCOL.md)
+
+
+

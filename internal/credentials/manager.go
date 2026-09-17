@@ -7,10 +7,12 @@ import (
 )
 
 const (
-	OpenAITunnelAPIKeyTarget      = "CWapi/2.0/OpenAI/Tunnel/APIKey"
-	OpenAITunnelAgentAPIKeyTarget = "CWapi/2.0/OpenAI/Tunnel/Agent/APIKey"
-	StoreName                     = "windows_credential_manager"
-	maxTokenBytes                 = 4096
+	OpenAITunnelAPIKeyTarget                   = "CWapi/2.0/OpenAI/Tunnel/APIKey"
+	OpenAITunnelAgentAPIKeyTarget              = "CWapi/2.0/OpenAI/Tunnel/Agent/APIKey"
+	OpenAITunnelProfileAPIKeyTargetPrefix      = "CWapi/2.0/OpenAI/Tunnel/Profile/"
+	OpenAITunnelAgentProfileAPIKeyTargetPrefix = "CWapi/2.0/OpenAI/Tunnel/Agent/Profile/"
+	StoreName                                  = "windows_credential_manager"
+	maxTokenBytes                              = 4096
 )
 
 type secretStore interface {
@@ -65,6 +67,65 @@ func (m *Manager) WriteOpenAITunnelAgentAPIKey(value string) error {
 
 func (m *Manager) DeleteOpenAITunnelAgentAPIKey() error {
 	return m.deleteOpenAITunnelAPIKey(OpenAITunnelAgentAPIKeyTarget, "CREDENTIAL_DELETE_OPENAI_AGENT_TUNNEL_FAILED")
+}
+func (m *Manager) ReadOpenAITunnelProfileAPIKey(profileID string) (string, bool, error) {
+	target, err := profileCredentialTarget(OpenAITunnelProfileAPIKeyTargetPrefix, profileID)
+	if err != nil {
+		return "", false, err
+	}
+	return m.readOpenAITunnelAPIKey(target, "CREDENTIAL_READ_OPENAI_TUNNEL_PROFILE_FAILED")
+}
+
+func (m *Manager) WriteOpenAITunnelProfileAPIKey(profileID, value string) error {
+	target, err := profileCredentialTarget(OpenAITunnelProfileAPIKeyTargetPrefix, profileID)
+	if err != nil {
+		return err
+	}
+	return m.writeOpenAITunnelAPIKey(target, value, "CREDENTIAL_WRITE_OPENAI_TUNNEL_PROFILE_FAILED")
+}
+
+func (m *Manager) DeleteOpenAITunnelProfileAPIKey(profileID string) error {
+	target, err := profileCredentialTarget(OpenAITunnelProfileAPIKeyTargetPrefix, profileID)
+	if err != nil {
+		return err
+	}
+	return m.deleteOpenAITunnelAPIKey(target, "CREDENTIAL_DELETE_OPENAI_TUNNEL_PROFILE_FAILED")
+}
+
+func (m *Manager) ReadOpenAITunnelAgentProfileAPIKey(profileID string) (string, bool, error) {
+	target, err := profileCredentialTarget(OpenAITunnelAgentProfileAPIKeyTargetPrefix, profileID)
+	if err != nil {
+		return "", false, err
+	}
+	return m.readOpenAITunnelAPIKey(target, "CREDENTIAL_READ_OPENAI_AGENT_TUNNEL_PROFILE_FAILED")
+}
+
+func (m *Manager) WriteOpenAITunnelAgentProfileAPIKey(profileID, value string) error {
+	target, err := profileCredentialTarget(OpenAITunnelAgentProfileAPIKeyTargetPrefix, profileID)
+	if err != nil {
+		return err
+	}
+	return m.writeOpenAITunnelAPIKey(target, value, "CREDENTIAL_WRITE_OPENAI_AGENT_TUNNEL_PROFILE_FAILED")
+}
+
+func (m *Manager) DeleteOpenAITunnelAgentProfileAPIKey(profileID string) error {
+	target, err := profileCredentialTarget(OpenAITunnelAgentProfileAPIKeyTargetPrefix, profileID)
+	if err != nil {
+		return err
+	}
+	return m.deleteOpenAITunnelAPIKey(target, "CREDENTIAL_DELETE_OPENAI_AGENT_TUNNEL_PROFILE_FAILED")
+}
+
+func profileCredentialTarget(prefix, profileID string) (string, error) {
+	if len(profileID) < 3 || len(profileID) > 64 || profileID != strings.TrimSpace(profileID) {
+		return "", errors.New("TUNNEL_PROFILE_ID_INVALID")
+	}
+	for _, r := range profileID {
+		if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '_' && r != '-' {
+			return "", errors.New("TUNNEL_PROFILE_ID_INVALID")
+		}
+	}
+	return prefix + profileID + "/APIKey", nil
 }
 
 func (m *Manager) readOpenAITunnelAPIKey(target, readCode string) (string, bool, error) {

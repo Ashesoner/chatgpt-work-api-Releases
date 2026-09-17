@@ -1,4 +1,4 @@
-# CWapi 2.0 Troubleshooting
+﻿# CWapi 2.0 Troubleshooting
 
 [English](TROUBLESHOOTING.md) | [简体中文](TROUBLESHOOTING.zh-CN.md)
 
@@ -137,7 +137,7 @@ The portable was only partially copied/extracted, runtime files were removed, or
 
 **How to fix**
 
-Re-extract the complete official `CWapi-v2.0.5.zip` into a clean user-writable directory. Do not replace the bundled runtime with an arbitrary Codex installation.
+Re-extract the complete official `CWapi-v2.0.6.zip` into a clean user-writable directory. Do not replace the bundled runtime with an arbitrary Codex installation.
 
 ## Private Git clone/fetch/push fails
 
@@ -196,38 +196,32 @@ The repository URL/target ref/expected commit is incompatible with the existing 
 
 Resume using matching parameters. If you intentionally want a new baseline, first preserve any important local work, then rebuild the workspace through CWapi's maintenance flow rather than deleting files blindly.
 
-## An old `coding_attachment` tool still appears
+## `coding_attachment` is missing
 
 **Symptom**
 
-The ChatGPT Coding app shows five tools or still lists `coding_attachment`.
+The ChatGPT Coding app shows only five tools and does not list `coding_attachment`.
 
 **Likely cause**
 
-The connected MCP app is using an older server/catalog rather than the CWapi 2.0.5 Coding route.
+The connected MCP app is using an older server/catalog rather than the CWapi 2.0.6 Coding route.
 
 **How to fix**
 
-Confirm that CWapi 2.0.5 and its Coding Tunnel are running, reconnect the Coding app, and verify the exact five-tool catalog. Coding MCP no longer transfers files or images.
-
-## `AGENT_FILE_ATTACHMENTS_UNSUPPORTED`
+Confirm that CWapi 2.0.6 and its Coding Tunnel are running, reconnect the Coding app, and verify the six-tool catalog: `coding_open`, `coding_exec`, `coding_status`, `coding_attachment`, `coding_close`, and `load_skill`.
+## `AGENT_IMAGE_ATTACHMENT_REQUIRED`
 
 **Symptom**
 
-A local Agent request is rejected with `AGENT_FILE_ATTACHMENTS_UNSUPPORTED`.
+A local Agent request is rejected with `AGENT_IMAGE_ATTACHMENT_REQUIRED`.
 
 **Likely cause**
 
-The client sent CWapi's unsupported generic top-level `attachments` file extension.
-
-**What to check**
-
-Inspect the client request shape. Agent accepts text and tool JSON only.
+A CWapi top-level `attachments` item is not a supported inline raster image.
 
 **How to fix**
 
-Remove the top-level `attachments` field. Provide textual context or use the local application's own tools to inspect local data.
-
+Send only supported inline raster images in the `attachments` extension, or provide non-image data through text/tool results. Generic files are not transported through Agent MCP.
 ## `AGENT_MEDIA_INPUT_UNSUPPORTED`
 
 **Symptom**
@@ -236,11 +230,11 @@ A local Agent request is rejected with `AGENT_MEDIA_INPUT_UNSUPPORTED`.
 
 **Likely cause**
 
-One or more Chat Completions message content parts are not `text`, for example an `image_url` part.
+One or more Chat Completions message content parts are neither `text` nor a supported inline raster `image_url` data URI.
 
 **How to fix**
 
-Send text-only message content and tool JSON. CWapi does not enqueue or return file/image content through Agent MCP.
+Use text/tool JSON or a supported inline raster `image_url` data URI. Remote image URLs are rejected separately with `AGENT_IMAGE_URL_UNSUPPORTED`; generic files remain unsupported.
 
 ## Agent Provider returns 401 `invalid_api_key`
 
@@ -405,3 +399,5 @@ Prefer CWapi's targeted maintenance actions for individual workspaces. If you in
 Collect only the relevant error code, CWapi/Tunnel state, `coding_status` output when applicable, and the exact local HTTP status for Agent. Avoid posting secrets such as MCP tokens, Agent API keys, Tunnel Runtime API keys, or private repository credentials.
 
 See also [FAQ](FAQ.md), [Coding Guide](CODING_GUIDE.md), [Agent Guide](AGENT_GUIDE.md), and [Operations](OPERATIONS.md).
+
+

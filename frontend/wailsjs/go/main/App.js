@@ -18,3 +18,13 @@ export function UpdateCodexAccessProfile(arg1) { return window['go']['main']['Ap
 export function UpdateCodexNetworkAccess(arg1) { return window['go']['main']['App']['UpdateCodexNetworkAccess'](arg1); }
 
 export function UpdateCodexRemoteGitRewrite(arg1) { return window['go']['main']['App']['UpdateCodexRemoteGitRewrite'](arg1); }
+export function ActivateAgentTunnelProfile(arg1) { return window['go']['main']['App']['ActivateAgentTunnelProfile'](arg1); }
+export function ActivateCodingTunnelProfile(arg1) { return window['go']['main']['App']['ActivateCodingTunnelProfile'](arg1); }
+export function AgentTunnelProfiles() { return window['go']['main']['App']['AgentTunnelProfiles'](); }
+export function CodingTunnelProfiles() { return window['go']['main']['App']['CodingTunnelProfiles'](); }
+export function DeactivateAgentTunnelProfile() { return window['go']['main']['App']['DeactivateAgentTunnelProfile'](); }
+export function DeactivateCodingTunnelProfile() { return window['go']['main']['App']['DeactivateCodingTunnelProfile'](); }
+export function DeleteAgentTunnelProfile(arg1) { return window['go']['main']['App']['DeleteAgentTunnelProfile'](arg1); }
+export function DeleteCodingTunnelProfile(arg1) { return window['go']['main']['App']['DeleteCodingTunnelProfile'](arg1); }
+export function SaveAgentTunnelProfile(arg1, arg2, arg3, arg4) { return window['go']['main']['App']['SaveAgentTunnelProfile'](arg1, arg2, arg3, arg4); }
+export function SaveCodingTunnelProfile(arg1, arg2, arg3, arg4) { return window['go']['main']['App']['SaveCodingTunnelProfile'](arg1, arg2, arg3, arg4); }

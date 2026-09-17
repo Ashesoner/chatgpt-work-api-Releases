@@ -13,18 +13,21 @@ import (
 	"time"
 
 	"github.com/AAAYNMMM/CWapi/internal/v2/agentprotocol"
+	"github.com/AAAYNMMM/CWapi/internal/v2/attachments"
 	"github.com/AAAYNMMM/CWapi/internal/v2/mcpserver"
 )
 
 const (
-	DefaultMaxPending     = 16
-	DefaultMaxInflight    = 4
-	DefaultMaxBatchBytes  = 1024 * 1024
-	DefaultRequestTimeout = 180 * time.Second
-	DefaultWaitTimeout    = 45 * time.Second
-	DefaultBridgeLease    = 2 * time.Minute
-	DefaultReceiptTTL     = 5 * time.Minute
-	DefaultHeartbeat      = 15 * time.Second
+	DefaultMaxPending         = 16
+	DefaultMaxInflight        = 4
+	DefaultMaxBatchBytes      = 1024 * 1024
+	DefaultActivityTimeout    = 3 * time.Minute
+	DefaultMaxRequestLifetime = 30 * time.Minute
+	DefaultMaxImageMemory     = 64 * 1024 * 1024
+	DefaultWaitTimeout        = 45 * time.Second
+	DefaultBridgeLease        = 2 * time.Minute
+	DefaultReceiptTTL         = 5 * time.Minute
+	DefaultHeartbeat          = 15 * time.Second
 )
 
 const (
@@ -42,54 +45,78 @@ const (
 )
 
 type Config struct {
-	MaxPending     int
-	MaxInflight    int
-	MaxBatchBytes  int
-	RequestTimeout time.Duration
-	WaitTimeout    time.Duration
-	BridgeLease    time.Duration
-	ReceiptTTL     time.Duration
-	Heartbeat      time.Duration
+	MaxPending         int
+	MaxInflight        int
+	MaxBatchBytes      int
+	RequestTimeout     time.Duration // backwards-compatible alias for ActivityTimeout
+	ActivityTimeout    time.Duration
+	MaxRequestLifetime time.Duration
+	MaxImageMemory     int64
+	WaitTimeout        time.Duration
+	BridgeLease        time.Duration
+	ReceiptTTL         time.Duration
+	Heartbeat          time.Duration
+}
+
+type RequestSnapshot struct {
+	RequestID      string `json:"request_id"`
+	TaskID         string `json:"task_id,omitempty"`
+	CorrelationID  string `json:"correlation_id,omitempty"`
+	State          string `json:"state"`
+	Progress       string `json:"progress,omitempty"`
+	LastActivity   string `json:"last_activity"`
+	HardDeadlineAt string `json:"hard_deadline_at"`
 }
 
 type Snapshot struct {
-	BridgeState     string `json:"bridge_state"`
-	Pending         int    `json:"pending"`
-	Claimed         int    `json:"claimed"`
-	Active          int    `json:"active"`
-	Completed       uint64 `json:"completed"`
-	Revision        uint64 `json:"revision"`
-	IdleCount       int    `json:"idle_count"`
-	LastState       string `json:"last_state,omitempty"`
-	LastError       string `json:"last_error,omitempty"`
-	LastHeartbeatAt string `json:"last_heartbeat_at,omitempty"`
-	LastProgress    string `json:"last_progress,omitempty"`
+	BridgeState     string            `json:"bridge_state"`
+	Pending         int               `json:"pending"`
+	Claimed         int               `json:"claimed"`
+	Active          int               `json:"active"`
+	Completed       uint64            `json:"completed"`
+	Revision        uint64            `json:"revision"`
+	IdleCount       int               `json:"idle_count"`
+	LastState       string            `json:"last_state,omitempty"`
+	LastError       string            `json:"last_error,omitempty"`
+	LastHeartbeatAt string            `json:"last_heartbeat_at,omitempty"`
+	LastProgress    string            `json:"last_progress,omitempty"`
+	ImageBytes      int64             `json:"image_bytes"`
+	Requests        []RequestSnapshot `json:"requests,omitempty"`
 }
 
 type Completion = agentprotocol.Completion
 
 type request struct {
-	id            string
-	bridgeID      string
-	taskID        string
-	correlationID string
-	conversation  agentprotocol.Conversation
-	payload       map[string]any
-	payloadBytes  int
-	model         string
-	stream        bool
-	created       time.Time
-	claimed       time.Time
-	lastDelivered time.Time
-	lastActivity  time.Time
-	deadline      time.Time
-	state         string
-	previousState string
-	resumeReason  string
-	delivery      int
-	result        Completion
-	errCode       string
-	done          chan struct{}
+	id              string
+	bridgeID        string
+	taskID          string
+	correlationID   string
+	conversation    agentprotocol.Conversation
+	payload         map[string]any
+	payloadBytes    int
+	attachmentBytes int64
+	attachments     []attachments.Item
+	model           string
+	stream          bool
+	created         time.Time
+	claimed         time.Time
+	lastDelivered   time.Time
+	lastActivity    time.Time
+	deadline        time.Time
+	hardDeadline    time.Time
+	progress        string
+	progressAt      time.Time
+	streamCh        chan agentprotocol.StreamChunk
+	streamChunks    []agentprotocol.StreamChunk
+	streamBytes     int
+	streamVersion   uint64
+	state           string
+	previousState   string
+	resumeReason    string
+	delivery        int
+	result          Completion
+	errCode         string
+	done            chan struct{}
 }
 
 type receipt struct {
@@ -116,7 +143,6 @@ type Broker struct {
 	lastState      string
 	lastError      string
 	lastHeartbeat  time.Time
-	lastProgress   string
 	stopHeartbeat  chan struct{}
 }
 
@@ -133,8 +159,19 @@ func New(cfg Config) *Broker {
 	if cfg.MaxBatchBytes <= 0 {
 		cfg.MaxBatchBytes = DefaultMaxBatchBytes
 	}
-	if cfg.RequestTimeout <= 0 {
-		cfg.RequestTimeout = DefaultRequestTimeout
+	if cfg.ActivityTimeout <= 0 {
+		if cfg.RequestTimeout > 0 {
+			cfg.ActivityTimeout = cfg.RequestTimeout
+		} else {
+			cfg.ActivityTimeout = DefaultActivityTimeout
+		}
+	}
+	cfg.RequestTimeout = cfg.ActivityTimeout
+	if cfg.MaxRequestLifetime <= 0 {
+		cfg.MaxRequestLifetime = DefaultMaxRequestLifetime
+	}
+	if cfg.MaxImageMemory <= 0 {
+		cfg.MaxImageMemory = DefaultMaxImageMemory
 	}
 	if cfg.WaitTimeout <= 0 {
 		cfg.WaitTimeout = DefaultWaitTimeout
@@ -206,6 +243,7 @@ func (b *Broker) Exchange(ctx context.Context, input mcpserver.AgentExchangeInpu
 		capacity = b.cfg.MaxInflight
 	}
 	started := time.Now()
+	preparedResponses := prepareResponses(input.Responses)
 
 	b.mu.Lock()
 	now := time.Now()
@@ -222,6 +260,7 @@ func (b *Broker) Exchange(ctx context.Context, input mcpserver.AgentExchangeInpu
 	}
 	bridgeID := b.bridgeID
 	b.mu.Unlock()
+	b.validatePreparedResponses(bridgeID, preparedResponses)
 
 	timer := time.NewTimer(b.cfg.WaitTimeout)
 	defer timer.Stop()
@@ -229,6 +268,7 @@ func (b *Broker) Exchange(ctx context.Context, input mcpserver.AgentExchangeInpu
 	var events []mcpserver.AgentEvent
 	responsesProcessed := false
 	followupExpected := false
+	activityOnly := len(input.Responses) == 0 && (len(input.Progress) > 0 || len(input.StreamChunks) > 0)
 
 	for {
 		b.mu.Lock()
@@ -243,10 +283,16 @@ func (b *Broker) Exchange(ctx context.Context, input mcpserver.AgentExchangeInpu
 		b.touchBridgeLocked(now)
 		if !responsesProcessed {
 			var responseEvents []mcpserver.AgentEvent
-			results, followupExpected, responseEvents = b.acceptResponsesLocked(bridgeID, input.Responses, now)
+			results, followupExpected, responseEvents = b.acceptPreparedResponsesLocked(bridgeID, preparedResponses, now)
 			events = append(events, responseEvents...)
 			events = append(events, b.acceptProgressLocked(bridgeID, input.Progress, now)...)
+			events = append(events, b.acceptStreamChunksLocked(bridgeID, input.StreamChunks, now)...)
 			responsesProcessed = true
+			if activityOnly {
+				output := b.exchangeOutputLocked("activity", results, nil, events, started)
+				b.mu.Unlock()
+				return output, nil
+			}
 		}
 		requests := b.nextBatchLocked(bridgeID, capacity, now)
 		if len(requests) > 0 {
@@ -302,15 +348,40 @@ func (b *Broker) Close(_ context.Context, _ mcpserver.AgentCloseInput) (mcpserve
 	return mcpserver.AgentCloseOutput{State: "closed"}, nil
 }
 func (b *Broker) Enqueue(conversation agentprotocol.Conversation) (*RequestHandle, error) {
+	return b.EnqueueWithAttachments(conversation, attachments.Batch{})
+}
+
+func (b *Broker) EnqueueWithAttachments(conversation agentprotocol.Conversation, batch attachments.Batch) (*RequestHandle, error) {
 	if b == nil {
 		return nil, errors.New("AGENT_BROKER_UNAVAILABLE")
 	}
+	// Canonical projection, JSON sizing, and media validation are deliberately
+	// outside the broker mutex. The lock protects state, not request parsing.
+	payloadCopy, err := agentprotocol.EncodeBridgeRequest(conversation)
+	if err != nil {
+		return nil, err
+	}
+	payloadJSON, err := json.Marshal(payloadCopy)
+	if err != nil {
+		return nil, errors.New("AGENT_REQUEST_JSON_INVALID")
+	}
+	if len(payloadJSON) > b.cfg.MaxBatchBytes {
+		return nil, errors.New("AGENT_REQUEST_TOO_LARGE")
+	}
+	policy := attachments.AgentPolicy()
+	if batch.TotalBytes > policy.MaxBatchBytes || len(batch.Items) > policy.MaxFiles {
+		return nil, errors.New("ATTACHMENT_BATCH_TOO_LARGE")
+	}
+	if err := validateImageBindings(conversation, batch); err != nil {
+		return nil, err
+	}
+
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.closed {
 		return nil, errors.New("AGENT_BROKER_CLOSED")
 	}
-	now := time.Now()
+	now := time.Now().UTC()
 	b.expireRequestsLocked(now)
 	b.expireBridgeLocked(now)
 	if b.bridgeID == "" {
@@ -319,21 +390,27 @@ func (b *Broker) Enqueue(conversation agentprotocol.Conversation) (*RequestHandl
 	if b.activeCountLocked() >= b.cfg.MaxPending {
 		return nil, errors.New("AGENT_BUSY")
 	}
-	payloadCopy, err := agentprotocol.EncodeBridgeRequest(conversation)
-	if err != nil {
-		return nil, err
+	if batch.TotalBytes > 0 && b.imageBytesLocked()+batch.TotalBytes > b.cfg.MaxImageMemory {
+		return nil, errors.New("AGENT_MEDIA_BUSY")
 	}
-	payloadJSON, _ := json.Marshal(payloadCopy)
-	if len(payloadJSON) > b.cfg.MaxBatchBytes {
-		return nil, errors.New("AGENT_REQUEST_TOO_LARGE")
-	}
-	now = now.UTC()
+
 	requestID := "request_" + rand.Text()
 	taskID, correlationID := requestIdentity(conversation.Metadata)
+	hardDeadline := now.Add(b.cfg.MaxRequestLifetime)
+	activityDeadline := now.Add(b.cfg.ActivityTimeout)
+	if activityDeadline.After(hardDeadline) {
+		activityDeadline = hardDeadline
+	}
+	var streamCh chan agentprotocol.StreamChunk
+	if conversation.Stream {
+		streamCh = make(chan agentprotocol.StreamChunk, 128)
+	}
 	req := &request{
 		id: requestID, bridgeID: b.bridgeID, taskID: taskID, correlationID: correlationID,
 		conversation: conversation, payload: payloadCopy, payloadBytes: len(payloadJSON),
-		model: strings.TrimSpace(conversation.Model), stream: conversation.Stream, created: now, lastActivity: now, deadline: now.Add(b.cfg.RequestTimeout),
+		attachmentBytes: batch.TotalBytes, attachments: append([]attachments.Item(nil), batch.Items...),
+		model: strings.TrimSpace(conversation.Model), stream: conversation.Stream, streamCh: streamCh,
+		created: now, lastActivity: now, deadline: activityDeadline, hardDeadline: hardDeadline,
 		state: StateQueued, done: make(chan struct{}),
 	}
 	b.requests[req.id] = req
@@ -342,27 +419,18 @@ func (b *Broker) Enqueue(conversation agentprotocol.Conversation) (*RequestHandl
 	b.signalLocked()
 	return &RequestHandle{broker: b, id: req.id, done: req.done, deadline: req.deadline}, nil
 }
+
 func (b *Broker) Snapshot() Snapshot {
 	if b == nil {
 		return Snapshot{BridgeState: "OFFLINE"}
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	now := time.Now()
+	now := time.Now().UTC()
 	b.cleanupReceiptsLocked(now)
 	b.expireRequestsLocked(now)
 	b.expireBridgeLocked(now)
-	pending, claimed := 0, 0
-	for _, req := range b.requests {
-		if req == nil {
-			continue
-		}
-		if req.state == StateQueued {
-			pending++
-		} else if isInflightRequestState(req.state) {
-			claimed++
-		}
-	}
+	pending, claimed := b.requestCountsLocked()
 	state := "OFFLINE"
 	if b.bridgeID != "" {
 		state = "READY"
@@ -374,10 +442,22 @@ func (b *Broker) Snapshot() Snapshot {
 	if !b.lastHeartbeat.IsZero() {
 		lastHeartbeat = b.lastHeartbeat.UTC().Format(time.RFC3339Nano)
 	}
+	requests := make([]RequestSnapshot, 0, b.activeCountLocked())
+	for _, req := range b.requests {
+		if req == nil || !isActiveRequestState(req.state) {
+			continue
+		}
+		requests = append(requests, RequestSnapshot{
+			RequestID: req.id, TaskID: req.taskID, CorrelationID: req.correlationID, State: req.state,
+			Progress: req.progress, LastActivity: formatTime(req.lastActivity), HardDeadlineAt: formatTime(req.hardDeadline),
+		})
+	}
+	sort.Slice(requests, func(i, j int) bool { return requests[i].RequestID < requests[j].RequestID })
 	return Snapshot{
 		BridgeState: state, Pending: pending, Claimed: claimed, Active: pending + claimed,
 		Completed: b.completed, Revision: b.revision, IdleCount: b.idleCount,
-		LastState: b.lastState, LastError: b.lastError, LastHeartbeatAt: lastHeartbeat, LastProgress: b.lastProgress,
+		LastState: b.lastState, LastError: b.lastError, LastHeartbeatAt: lastHeartbeat, LastProgress: b.lastProgressLocked(),
+		ImageBytes: b.imageBytesLocked(), Requests: requests,
 	}
 }
 
@@ -400,107 +480,6 @@ func (b *Broker) Shutdown() {
 	b.closeBridgeLocked("AGENT_BROKER_CLOSED")
 }
 
-func (b *Broker) acceptResponsesLocked(bridgeID string, responses []mcpserver.AgentExchangeResponse, now time.Time) ([]mcpserver.AgentExchangeResult, bool, []mcpserver.AgentEvent) {
-	if len(responses) == 0 {
-		return nil, false, nil
-	}
-	results := make([]mcpserver.AgentExchangeResult, 0, len(responses))
-	events := make([]mcpserver.AgentEvent, 0, len(responses))
-	followupExpected := false
-	for _, response := range responses {
-		requestID := strings.TrimSpace(response.RequestID)
-		result := mcpserver.AgentExchangeResult{RequestID: requestID}
-		if requestID == "" || response.Response == nil {
-			result.State, result.Error = "rejected", "AGENT_RESPONSE_INVALID"
-			result.Detail = responseErrorDetail(errors.New(result.Error), requestID, response.Response, true)
-			results = append(results, result)
-			continue
-		}
-		canonical, err := agentprotocol.DecodeBridgeCompletion(response.Response, nil)
-		if err != nil {
-			code := errorCode(err)
-			result.State, result.Error = "rejected", code
-			result.Detail = responseErrorDetail(err, requestID, response.Response, true)
-			if req := b.requests[requestID]; req != nil && req.bridgeID == bridgeID && isActiveRequestState(req.state) {
-				b.markRetryableLocked(req, code, now)
-			}
-			events = append(events, errorEvent(result.Detail, now))
-			results = append(results, result)
-			continue
-		}
-		fingerprint, fingerprintOK := completionFingerprint(canonical)
-		if !fingerprintOK {
-			result.State, result.Error = "rejected", "AGENT_RESPONSE_INVALID"
-			result.Detail = responseErrorDetail(errors.New(result.Error), requestID, response.Response, true)
-			if req := b.requests[requestID]; req != nil && req.bridgeID == bridgeID && isActiveRequestState(req.state) {
-				b.markRetryableLocked(req, result.Error, now)
-			}
-			events = append(events, errorEvent(result.Detail, now))
-			results = append(results, result)
-			continue
-		}
-		if prior, ok := b.receipts[requestID]; ok {
-			if prior.bridgeID == bridgeID && prior.fingerprint == fingerprint {
-				result.State = "duplicate"
-				followupExpected = followupExpected || canonical.FinishReason == "tool_calls"
-			} else {
-				result.State, result.Error = "rejected", "AGENT_RESPONSE_CONFLICT"
-				result.Detail = responseErrorDetail(errors.New(result.Error), requestID, response.Response, false)
-			}
-			results = append(results, result)
-			continue
-		}
-		req := b.requests[requestID]
-		if req == nil || req.bridgeID != bridgeID || !isActiveRequestState(req.state) || !now.Before(req.deadline) {
-			if req != nil && isActiveRequestState(req.state) && !now.Before(req.deadline) {
-				b.finishLocked(req, StateTimedOut, "AGENT_REQUEST_TIMEOUT", Completion{})
-			}
-			result.State, result.Error = "rejected", "REQUEST_NO_LONGER_ACTIVE"
-			result.Detail = responseErrorDetail(errors.New(result.Error), requestID, response.Response, false)
-			results = append(results, result)
-			continue
-		}
-		completion, err := agentprotocol.DecodeBridgeCompletion(response.Response, &req.conversation)
-		if err != nil {
-			code := errorCode(err)
-			result.State, result.Error = "rejected", code
-			result.Detail = responseErrorDetail(err, requestID, response.Response, true)
-			b.markRetryableLocked(req, code, now)
-			events = append(events, errorEvent(result.Detail, now))
-			results = append(results, result)
-			continue
-		}
-		expectedEvent := "completion"
-		if completion.FinishReason == "tool_calls" {
-			expectedEvent = "tool_call"
-		}
-		if supplied := strings.TrimSpace(response.Event); supplied != "" && supplied != expectedEvent {
-			err := errors.New("AGENT_RESPONSE_EVENT_MISMATCH")
-			result.State, result.Error = "rejected", err.Error()
-			result.Detail = responseErrorDetail(err, requestID, response.Response, true)
-			b.markRetryableLocked(req, result.Error, now)
-			events = append(events, errorEvent(result.Detail, now))
-			results = append(results, result)
-			continue
-		}
-		b.receipts[requestID] = receipt{bridgeID: bridgeID, fingerprint: fingerprint, expires: now.Add(b.cfg.ReceiptTTL)}
-		if completion.FinishReason == "tool_calls" {
-			b.finishLocked(req, StateWaitingTool, "", completion)
-			for _, call := range completion.ToolCalls {
-				events = append(events, mcpserver.AgentEvent{Type: "tool_call", RequestID: requestID, ToolCallID: call.ID, ToolName: call.Name, At: now.UTC().Format(time.RFC3339Nano)})
-			}
-			followupExpected = true
-		} else {
-			b.finishLocked(req, StateCompleted, "", completion)
-			events = append(events, mcpserver.AgentEvent{Type: "completion", RequestID: requestID, At: now.UTC().Format(time.RFC3339Nano)})
-		}
-		b.completed++
-		result.State = "completed"
-		results = append(results, result)
-	}
-	return results, followupExpected, events
-}
-
 func (b *Broker) nextBatchLocked(bridgeID string, capacity int, now time.Time) []mcpserver.AgentExchangeRequest {
 	b.expireRequestsLocked(now)
 	inflight := make([]*request, 0, b.cfg.MaxInflight)
@@ -517,8 +496,10 @@ func (b *Broker) nextBatchLocked(bridgeID string, capacity int, now time.Time) [
 	})
 	batch := make([]mcpserver.AgentExchangeRequest, 0, capacity)
 	batchBytes := 0
+	attachmentBytes := int64(0)
+	attachmentLimit := attachments.AgentPolicy().MaxBatchBytes
 	appendRequest := func(req *request) bool {
-		if req == nil || len(batch) >= capacity || batchBytes+req.payloadBytes > b.cfg.MaxBatchBytes {
+		if req == nil || len(batch) >= capacity || batchBytes+req.payloadBytes > b.cfg.MaxBatchBytes || attachmentBytes+req.attachmentBytes > attachmentLimit {
 			return false
 		}
 		if req.claimed.IsZero() {
@@ -533,20 +514,26 @@ func (b *Broker) nextBatchLocked(bridgeID string, capacity int, now time.Time) [
 		}
 		req.delivery++
 		req.lastDelivered = now.UTC()
-		req.lastActivity = now.UTC()
-		req.deadline = now.Add(b.cfg.RequestTimeout).UTC()
+		b.refreshActivityLocked(req, now)
 		if req.state != StateRunning {
 			req.previousState = req.state
 			req.state = StateRunning
 			b.transitionLocked(StateRunning, "")
 		}
 		batchBytes += req.payloadBytes
+		attachmentBytes += req.attachmentBytes
+		metadata := make([]attachments.Metadata, 0, len(req.attachments))
+		for _, item := range req.attachments {
+			metadata = append(metadata, item.Metadata)
+		}
 		batch = append(batch, mcpserver.AgentExchangeRequest{
 			RequestID: req.id, TaskID: req.taskID, CorrelationID: req.correlationID, State: "claimed", LifecycleState: req.state,
 			Delivery: req.delivery, PreviousState: previousState, ResumeReason: resumeReason,
 			CreatedAt: req.created.UTC().Format(time.RFC3339Nano), ClaimedAt: req.claimed.UTC().Format(time.RFC3339Nano),
 			LastDeliveredAt: req.lastDelivered.UTC().Format(time.RFC3339Nano), LastActivity: req.lastActivity.UTC().Format(time.RFC3339Nano),
-			DeadlineAt: req.deadline.UTC().Format(time.RFC3339Nano), Event: requestEvent(req.conversation), Request: cloneMap(req.payload),
+			DeadlineAt: formatTime(req.deadline), ActivityDeadlineAt: formatTime(req.deadline), HardDeadlineAt: formatTime(req.hardDeadline),
+			Progress: req.progress, ProgressAt: formatTime(req.progressAt), Event: requestEvent(req.conversation), Request: req.payload,
+			Attachments: metadata, ContentItems: append([]attachments.Item(nil), req.attachments...),
 		})
 		return true
 	}
@@ -568,7 +555,7 @@ func (b *Broker) nextBatchLocked(bridgeID string, capacity int, now time.Time) [
 			b.finishLocked(req, StateTimedOut, "AGENT_REQUEST_TIMEOUT", Completion{})
 			continue
 		}
-		if batchBytes+req.payloadBytes > b.cfg.MaxBatchBytes {
+		if batchBytes+req.payloadBytes > b.cfg.MaxBatchBytes || attachmentBytes+req.attachmentBytes > attachmentLimit {
 			break
 		}
 		b.queue = b.queue[1:]
@@ -636,19 +623,6 @@ func (b *Broker) heartbeatLocked(now time.Time) {
 	now = now.UTC()
 	b.lastHeartbeat = now
 	b.touchBridgeLocked(now)
-	for _, req := range b.requests {
-		if req == nil || !isActiveRequestState(req.state) {
-			continue
-		}
-		if req.bridgeID == "" {
-			req.bridgeID = b.bridgeID
-		}
-		if req.bridgeID != b.bridgeID {
-			continue
-		}
-		req.lastActivity = now
-		req.deadline = now.Add(b.cfg.RequestTimeout)
-	}
 }
 
 func (b *Broker) acceptProgressLocked(bridgeID string, progress []mcpserver.AgentProgress, now time.Time) []mcpserver.AgentEvent {
@@ -663,14 +637,14 @@ func (b *Broker) acceptProgressLocked(bridgeID string, progress []mcpserver.Agen
 		if requestID == "" || message == "" || req == nil || req.bridgeID != bridgeID || !isActiveRequestState(req.state) {
 			continue
 		}
-		req.lastActivity = now.UTC()
-		req.deadline = now.Add(b.cfg.RequestTimeout).UTC()
+		b.refreshActivityLocked(req, now)
+		req.progress = message
+		req.progressAt = now.UTC()
 		if req.state == StateClaimed {
 			req.previousState = req.state
 			req.state = StateRunning
 			b.transitionLocked(StateRunning, "")
 		}
-		b.lastProgress = message
 		events = append(events, mcpserver.AgentEvent{Type: "progress", RequestID: requestID, Message: message, At: now.UTC().Format(time.RFC3339Nano)})
 	}
 	return events
@@ -707,7 +681,7 @@ func (b *Broker) closeBridgeLocked(code string) {
 	b.bridgeID = ""
 	b.bridgeDeadline = time.Time{}
 	for _, req := range b.requests {
-		if req == nil || req.bridgeID != active || !isActiveRequestState(req.state) {
+		if req == nil || !isActiveRequestState(req.state) || req.bridgeID != active {
 			continue
 		}
 		req.previousState = req.state
@@ -745,8 +719,7 @@ func (b *Broker) markRetryableLocked(req *request, code string, now time.Time) {
 	req.previousState = req.state
 	req.state = StateFailedRetryable
 	req.errCode = code
-	req.lastActivity = now.UTC()
-	req.deadline = now.Add(b.cfg.RequestTimeout).UTC()
+	b.refreshActivityLocked(req, now)
 	req.resumeReason = "retry_after_error"
 	b.transitionLocked(StateFailedRetryable, code)
 	b.signalLocked()
@@ -758,10 +731,44 @@ func (b *Broker) finishLocked(req *request, state, code string, completion Compl
 	}
 	req.previousState = req.state
 	req.state, req.errCode, req.result = state, code, completion
+	if req.streamCh != nil {
+		close(req.streamCh)
+	}
+	req.streamChunks = nil
+	req.streamBytes = 0
+	b.releaseAttachmentsLocked(req)
 	req.lastActivity = time.Now().UTC()
 	b.transitionLocked(state, code)
 	close(req.done)
 	b.signalLocked()
+}
+
+func (b *Broker) releaseAttachmentsLocked(req *request) {
+	if req == nil {
+		return
+	}
+	req.attachments = nil
+	req.attachmentBytes = 0
+}
+
+func (b *Broker) refreshActivityLocked(req *request, now time.Time) {
+	if req == nil {
+		return
+	}
+	now = now.UTC()
+	req.lastActivity = now
+	next := now.Add(b.cfg.ActivityTimeout)
+	if !req.hardDeadline.IsZero() && next.After(req.hardDeadline) {
+		next = req.hardDeadline
+	}
+	req.deadline = next
+}
+
+func formatTime(value time.Time) string {
+	if value.IsZero() {
+		return ""
+	}
+	return value.UTC().Format(time.RFC3339Nano)
 }
 
 func (b *Broker) transitionLocked(state, code string) {
@@ -771,17 +778,7 @@ func (b *Broker) transitionLocked(state, code string) {
 }
 
 func (b *Broker) exchangeOutputLocked(state string, results []mcpserver.AgentExchangeResult, requests []mcpserver.AgentExchangeRequest, events []mcpserver.AgentEvent, started time.Time) mcpserver.AgentExchangeOutput {
-	pending, inflight := 0, 0
-	for _, req := range b.requests {
-		if req == nil {
-			continue
-		}
-		if req.state == StateQueued {
-			pending++
-		} else if isInflightRequestState(req.state) {
-			inflight++
-		}
-	}
+	pending, inflight := b.requestCountsLocked()
 	changed := b.revision != b.lastReported
 	nextAction := "process_requests"
 	switch state {
@@ -796,6 +793,9 @@ func (b *Broker) exchangeOutputLocked(state string, results []mcpserver.AgentExc
 	case "responses":
 		b.idleCount = 0
 		nextAction = "advance_or_finish"
+	case "activity":
+		b.idleCount = 0
+		nextAction = "continue_request"
 	default:
 		b.idleCount = 0
 	}
@@ -804,20 +804,72 @@ func (b *Broker) exchangeOutputLocked(state string, results []mcpserver.AgentExc
 	if waited < 0 {
 		waited = 0
 	}
-	lastHeartbeat := ""
-	if !b.lastHeartbeat.IsZero() {
-		lastHeartbeat = b.lastHeartbeat.UTC().Format(time.RFC3339Nano)
-	}
+	lastHeartbeat := formatTime(b.lastHeartbeat)
 	return mcpserver.AgentExchangeOutput{
 		State: state,
 		Activity: mcpserver.AgentExchangeActivity{
 			Revision: b.revision, Changed: changed, Pending: pending, Inflight: inflight,
 			Active: pending + inflight, QueuedRequests: pending, ActiveRequests: pending + inflight,
 			IdleCount: b.idleCount, WaitedMillis: waited, LastState: b.lastState, LastError: b.lastError,
-			LastHeartbeatAt: lastHeartbeat, LastProgress: b.lastProgress, NextAction: nextAction,
+			LastHeartbeatAt: lastHeartbeat, LastProgress: b.lastProgressLocked(), NextAction: nextAction,
+			ImageBytes: b.imageBytesLocked(), Requests: b.requestActivitiesLocked(),
 		},
 		Results: results, Requests: requests, Events: events,
 	}
+}
+
+func (b *Broker) requestActivitiesLocked() []mcpserver.AgentRequestActivity {
+	result := make([]mcpserver.AgentRequestActivity, 0, b.activeCountLocked())
+	for _, req := range b.requests {
+		if req == nil || !isActiveRequestState(req.state) {
+			continue
+		}
+		result = append(result, mcpserver.AgentRequestActivity{
+			RequestID: req.id, TaskID: req.taskID, CorrelationID: req.correlationID,
+			State: req.state, Progress: req.progress, LastActivity: formatTime(req.lastActivity), HardDeadlineAt: formatTime(req.hardDeadline),
+		})
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].RequestID < result[j].RequestID })
+	return result
+}
+
+func (b *Broker) requestCountsLocked() (pending, inflight int) {
+	for _, req := range b.requests {
+		if req == nil {
+			continue
+		}
+		if req.state == StateQueued {
+			pending++
+		} else if isInflightRequestState(req.state) {
+			inflight++
+		}
+	}
+	return pending, inflight
+}
+
+func (b *Broker) imageBytesLocked() int64 {
+	var total int64
+	for _, req := range b.requests {
+		if req != nil && isActiveRequestState(req.state) {
+			total += req.attachmentBytes
+		}
+	}
+	return total
+}
+
+func (b *Broker) lastProgressLocked() string {
+	var latest time.Time
+	message := ""
+	for _, req := range b.requests {
+		if req == nil || !isActiveRequestState(req.state) || req.progress == "" || req.progressAt.IsZero() {
+			continue
+		}
+		if latest.IsZero() || req.progressAt.After(latest) {
+			latest = req.progressAt
+			message = req.progress
+		}
+	}
+	return message
 }
 
 func isActiveRequestState(state string) bool {
@@ -925,17 +977,6 @@ func completionFingerprint(value Completion) (string, bool) {
 	}
 	digest := sha256.Sum256(payload)
 	return hex.EncodeToString(digest[:]), true
-}
-
-func cloneMap(value map[string]any) map[string]any {
-	if value == nil {
-		return nil
-	}
-	copy := make(map[string]any, len(value))
-	for key, item := range value {
-		copy[key] = item
-	}
-	return copy
 }
 
 func requestIdentity(metadata map[string]any) (string, string) {

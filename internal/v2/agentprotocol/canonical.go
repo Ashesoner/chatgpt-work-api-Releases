@@ -1,6 +1,10 @@
 package agentprotocol
 
-import "time"
+import (
+	"time"
+
+	"github.com/AAAYNMMM/CWapi/internal/v2/attachments"
+)
 
 const DefaultModel = "cwapi-web-gpt"
 
@@ -22,6 +26,17 @@ type Capabilities struct {
 	Files         bool `json:"files"`
 }
 
+type ContentPart struct {
+	Type     string `json:"type"`
+	Text     string `json:"text,omitempty"`
+	ImageRef string `json:"image_ref,omitempty"`
+}
+
+type DecodedRequest struct {
+	Conversation Conversation
+	Attachments  attachments.Batch
+}
+
 type Conversation struct {
 	Model          string
 	Messages       []Message
@@ -35,6 +50,7 @@ type Conversation struct {
 type Message struct {
 	Role       Role
 	Content    string
+	Parts      []ContentPart
 	Name       string
 	ToolCalls  []ToolCall
 	ToolResult *ToolResult
@@ -56,6 +72,7 @@ type ToolResult struct {
 	CallID  string
 	Name    string
 	Content string
+	Parts   []ContentPart
 }
 
 type ToolChoice struct {
@@ -143,6 +160,7 @@ type Adapter interface {
 	Name() string
 	Capabilities() Capabilities
 	DecodeRequest([]byte) (Conversation, error)
+	DecodeRequestWithMedia([]byte) (DecodedRequest, error)
 	EncodeCompletion(Completion, CompletionMetadata) (map[string]any, error)
 	DecodeStreamChunk([]byte) (StreamChunk, error)
 	EncodeStreamChunk(StreamChunk, CompletionMetadata) (map[string]any, error)

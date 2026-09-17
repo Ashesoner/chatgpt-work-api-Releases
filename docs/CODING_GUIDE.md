@@ -1,4 +1,4 @@
-# CWapi 2.0 Coding Guide
+﻿# CWapi 2.0 Coding Guide
 
 [English](CODING_GUIDE.md) | [简体中文](CODING_GUIDE.zh-CN.md)
 
@@ -28,7 +28,9 @@ The bundled Codex runtime is **not** a second coding agent. CWapi uses app-serve
 coding_open
 coding_exec
 coding_status
+coding_attachment
 coding_close
+load_skill
 ```
 
 Web GPT never receives or stores a public Coding session ID. Every later operation selects the active internal session through the same canonical `repository_url`.
@@ -204,7 +206,7 @@ When several searches are independent, group them sensibly. Avoid repeatedly rea
 
 Source, Markdown, JSON, config, logs, and other inspectable text should be read through `coding_exec`.
 
-Coding MCP has no file or image transfer tool and does not emit MCP `ImageContent` or `EmbeddedResource` content.
+Ordinary files are not transferred through Coding MCP. `coding_attachment` reads only bounded raster images inside the active workspace and emits native MCP `ImageContent` with the original bytes/MIME; it does not recompress, resize, transcode, or OCR them.
 
 For large files, prefer bounded output: a relevant range, search matches with context, or a project-specific query. This reduces MCP round trips and avoids flooding the conversation with irrelevant bytes.
 
@@ -298,7 +300,7 @@ If authentication fails, verify the Windows user's GitHub/Git credential setup o
 
 ## Files and images
 
-Coding MCP does not transfer files or images. Inspect source, Markdown, JSON, configuration, logs, and other text with bounded `coding_exec` commands. Binary files and images remain in the workspace and are not copied into the ChatGPT conversation.
+Coding MCP transfers only bounded raster images through `coding_attachment`; ordinary files remain unsupported. Source, Markdown, JSON, configuration, logs, and other text use bounded `coding_exec` commands. Supported raster images are returned as native `ImageContent` with original bytes/MIME and no recompression, resizing, transcoding, or OCR.
 
 ## Closing and later resuming
 
@@ -343,3 +345,6 @@ A later task can intentionally resume the existing compatible workspace with `re
 - [Troubleshooting](TROUBLESHOOTING.md)
 - [Codex Toolhost](CODEX_TOOLHOST.md)
 - [Protocol](PROTOCOL.md)
+
+
+

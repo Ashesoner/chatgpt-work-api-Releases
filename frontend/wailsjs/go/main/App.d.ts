@@ -16,3 +16,13 @@ export function UpdateCodexAccessProfile(arg1:string):Promise<any>;
 export function UpdateCodexNetworkAccess(arg1:boolean):Promise<any>;
 
 export function UpdateCodexRemoteGitRewrite(arg1:boolean):Promise<any>;
+export function ActivateAgentTunnelProfile(arg1:string):Promise<any>;
+export function ActivateCodingTunnelProfile(arg1:string):Promise<any>;
+export function AgentTunnelProfiles():Promise<any>;
+export function CodingTunnelProfiles():Promise<any>;
+export function DeactivateAgentTunnelProfile():Promise<any>;
+export function DeactivateCodingTunnelProfile():Promise<any>;
+export function DeleteAgentTunnelProfile(arg1:string):Promise<any>;
+export function DeleteCodingTunnelProfile(arg1:string):Promise<any>;
+export function SaveAgentTunnelProfile(arg1:string,arg2:string,arg3:string,arg4:string):Promise<any>;
+export function SaveCodingTunnelProfile(arg1:string,arg2:string,arg3:string,arg4:string):Promise<any>;

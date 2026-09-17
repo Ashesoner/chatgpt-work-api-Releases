@@ -1,4 +1,4 @@
-# Migrating from CWapi 1.6.3 to 2.0
+﻿# Migrating from CWapi 1.6.3 to 2.0
 
 [English](MIGRATION_FROM_1.6.md) | [简体中文](MIGRATION_FROM_1.6.zh-CN.md)
 
@@ -35,7 +35,7 @@ A safer migration is:
 
 ```text
 C:\Tools\CWapi-1.6.3\...
-C:\Tools\CWapi-2.0.5\...
+C:\Tools\CWapi-2.0.6\...
 ```
 
 Keep both extracted directories separate while testing 2.0. They can coexist because each portable directory has its own adjacent data root.
@@ -75,6 +75,7 @@ Do not copy an old 1.6 workspace directory into `CWapi-data/workspaces/<reposito
 coding_open
 coding_exec
 coding_status
+coding_attachment
 coding_close
 load_skill
 ```
@@ -152,10 +153,10 @@ Do not manually transplant old credential files into the new installation.
 
 1. **Finish or preserve important 1.6.3 work.** Commit/push important repository work where appropriate and make a separate backup of anything that must not be lost.
 2. **Leave 1.6.3 installed.** Do not modify the working 1.6.x directory yet.
-3. **Download and fully extract 2.0.5** into a different user-writable directory: [`CWapi-v2.0.5.zip`](https://github.com/AAAYNMMM/chatgpt-work-api-Releases/releases/download/v2.0.5/CWapi-v2.0.5.zip).
+3. **Download and fully extract 2.0.6** into a different user-writable directory: [`CWapi-v2.0.6.zip`](https://github.com/AAAYNMMM/chatgpt-work-api-Releases/releases/download/v2.0.6/CWapi-v2.0.6.zip).
 4. **Run CWapi 2.0 once** so it creates its own `CWapi-data` and v3 configuration.
 5. **Configure Coding** if needed: create a Coding Secure MCP Tunnel and save its Tunnel ID/Runtime API key through the Coding panel.
-6. **Connect the Coding app in ChatGPT** through that Tunnel and confirm the exact four `coding_*` tools appear.
+6. **Connect the Coding app in ChatGPT** through that Tunnel and confirm the exact five `coding_*` tools appear.
 7. **Open a test repository** and verify read-only Coding first, then normal SAFE edits/tests.
 8. **Configure Agent separately** if needed: create the second Agent Tunnel, connect the Agent MCP app, and configure your local client with CWapi's Base URL/model/Agent API key.
 9. **Verify your real workflow** before retiring 1.6.3.
@@ -187,3 +188,7 @@ There is no requirement to convert a working 1.6.3 installation merely because 2
 ## After migration
 
 Use [Getting Started](GETTING_STARTED.md) for setup details, [Coding Guide](CODING_GUIDE.md) for workspace behavior, [Agent Guide](AGENT_GUIDE.md) for the local provider, and [Troubleshooting](TROUBLESHOOTING.md) for connection errors.
+
+
+
+

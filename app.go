@@ -64,7 +64,12 @@ func (a *App) startup(ctx context.Context) {
 	a.startupErr = err
 	a.mu.Unlock()
 	if err != nil {
-		fmt.Println("CWapi 2.0.5 startup degraded:", err.Error())
+		fmt.Println("CWapi 2.0.6 startup degraded:", err.Error())
+	}
+	if err == nil {
+		if profileErr := a.ensureTunnelProfiles(); profileErr != nil {
+			fmt.Println("CWapi tunnel profile migration failed:", profileErr.Error())
+		}
 	}
 
 	a.tray = tray.New(a.showMainWindow, a.requestShutdown)
@@ -192,10 +197,12 @@ func (a *App) ConfigureOpenAITunnel(tunnelID, apiKey string) (OpenAITunnelInfo, 
 	if err := credentialManager.WriteOpenAITunnelAPIKey(apiKey); err != nil {
 		return a.OpenAITunnelInfo(), err
 	}
-	_, reconfigureErr := a.reconfigure(func(cfg *v2config.Config) {
-		cfg.Tunnel.Enabled = true
-		cfg.Tunnel.TunnelID = tunnelID
-	})
+	service, coreErr := a.core()
+	if coreErr != nil {
+		restoreErr := restoreOpenAITunnelKey(credentialManager, previousKey, previousPresent)
+		return a.OpenAITunnelInfo(), errors.Join(coreErr, restoreErr)
+	}
+	_, reconfigureErr := service.UpdateCodingOpenAITunnel(v2config.TunnelConfig{Enabled: true, TunnelID: tunnelID}, apiKey)
 	if reconfigureErr != nil {
 		restoreErr := restoreOpenAITunnelKey(credentialManager, previousKey, previousPresent)
 		return a.OpenAITunnelInfo(), errors.Join(reconfigureErr, restoreErr)
@@ -212,10 +219,12 @@ func (a *App) ClearOpenAITunnel() (OpenAITunnelInfo, error) {
 	if err := credentialManager.DeleteOpenAITunnelAPIKey(); err != nil {
 		return a.OpenAITunnelInfo(), err
 	}
-	_, reconfigureErr := a.reconfigure(func(cfg *v2config.Config) {
-		cfg.Tunnel.Enabled = false
-		cfg.Tunnel.TunnelID = ""
-	})
+	service, coreErr := a.core()
+	if coreErr != nil {
+		restoreErr := restoreOpenAITunnelKey(credentialManager, previousKey, previousPresent)
+		return a.OpenAITunnelInfo(), errors.Join(coreErr, restoreErr)
+	}
+	_, reconfigureErr := service.UpdateCodingOpenAITunnel(v2config.TunnelConfig{}, "")
 	if reconfigureErr != nil {
 		restoreErr := restoreOpenAITunnelKey(credentialManager, previousKey, previousPresent)
 		return a.OpenAITunnelInfo(), errors.Join(reconfigureErr, restoreErr)
@@ -239,10 +248,12 @@ func (a *App) ConfigureAgentOpenAITunnel(tunnelID, apiKey string) (OpenAITunnelI
 	if err := credentialManager.WriteOpenAITunnelAgentAPIKey(apiKey); err != nil {
 		return a.AgentOpenAITunnelInfo(), err
 	}
-	_, reconfigureErr := a.reconfigure(func(cfg *v2config.Config) {
-		cfg.AgentTunnel.Enabled = true
-		cfg.AgentTunnel.TunnelID = tunnelID
-	})
+	service, coreErr := a.core()
+	if coreErr != nil {
+		restoreErr := restoreOpenAITunnelAgentKey(credentialManager, previousKey, previousPresent)
+		return a.AgentOpenAITunnelInfo(), errors.Join(coreErr, restoreErr)
+	}
+	_, reconfigureErr := service.UpdateAgentOpenAITunnel(v2config.TunnelConfig{Enabled: true, TunnelID: tunnelID}, apiKey)
 	if reconfigureErr != nil {
 		restoreErr := restoreOpenAITunnelAgentKey(credentialManager, previousKey, previousPresent)
 		return a.AgentOpenAITunnelInfo(), errors.Join(reconfigureErr, restoreErr)
@@ -259,10 +270,12 @@ func (a *App) ClearAgentOpenAITunnel() (OpenAITunnelInfo, error) {
 	if err := credentialManager.DeleteOpenAITunnelAgentAPIKey(); err != nil {
 		return a.AgentOpenAITunnelInfo(), err
 	}
-	_, reconfigureErr := a.reconfigure(func(cfg *v2config.Config) {
-		cfg.AgentTunnel.Enabled = false
-		cfg.AgentTunnel.TunnelID = ""
-	})
+	service, coreErr := a.core()
+	if coreErr != nil {
+		restoreErr := restoreOpenAITunnelAgentKey(credentialManager, previousKey, previousPresent)
+		return a.AgentOpenAITunnelInfo(), errors.Join(coreErr, restoreErr)
+	}
+	_, reconfigureErr := service.UpdateAgentOpenAITunnel(v2config.TunnelConfig{}, "")
 	if reconfigureErr != nil {
 		restoreErr := restoreOpenAITunnelAgentKey(credentialManager, previousKey, previousPresent)
 		return a.AgentOpenAITunnelInfo(), errors.Join(reconfigureErr, restoreErr)

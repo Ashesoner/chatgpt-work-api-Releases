@@ -1,4 +1,4 @@
-# Release Tracks
+﻿# Release Tracks
 
 CWapi 从 2.0.0 开始在发行仓库中维护两条隔离路线。
 
@@ -6,11 +6,11 @@ CWapi 从 2.0.0 开始在发行仓库中维护两条隔离路线。
 
 `main` 是默认主线，只保存当前 CWapi 2.x 的干净发行源码快照与发行文档。
 
-当前 2.0.5 发行快照的开发源码来源：
+当前 2.0.6 发行快照的开发源码来源：
 
 ```text
 Repository: https://github.com/AAAYNMMM/CWapi
-Commit:     176d32e6d3caa6e069f0b73e1ab86c2604ce8915
+Commit:     952c07b4d3976089587c0e34ff1f8c1fbba11648
 ```
 
 发行分支不携带测试、开发进度、验证脚本、打包脚本和发布脚本。完整开发材料仍保留在开发仓库。
@@ -25,7 +25,8 @@ Commit:     176d32e6d3caa6e069f0b73e1ab86c2604ce8915
 
 GitHub Releases 继续按版本 tag 保存二进制资产：
 
-- `v2.0.0` 及后续 2.x（当前 `v2.0.5`）：对应 `main` 发行路线；
+- `v2.0.0` 及后续 2.x（当前 `v2.0.6`）：对应 `main` 发行路线；
 - `v1.6.3` 及更早版本：作为 legacy release 保留，可结合 `1.6.x` 分支查看旧版发行源码。
 
 切换分支只影响仓库源码视图，不会删除已有 tag 或 Release 资产。
+

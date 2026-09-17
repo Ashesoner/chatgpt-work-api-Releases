@@ -1,4 +1,4 @@
-# CWapi 2.0 故障排查
+﻿# CWapi 2.0 故障排查
 
 [English](TROUBLESHOOTING.md) | [简体中文](TROUBLESHOOTING.zh-CN.md)
 
@@ -131,7 +131,7 @@ portable 只复制了一部分、runtime 文件缺失，或者安全软件隔离
 
 **怎么修**
 
-把正式 `CWapi-v2.0.5.zip` 完整重新解压到一个干净、当前用户可写目录。不要随便拿另一个 Codex 安装去替换 bundled runtime。
+把正式 `CWapi-v2.0.6.zip` 完整重新解压到一个干净、当前用户可写目录。不要随便拿另一个 Codex 安装去替换 bundled runtime。
 
 ## private Git clone/fetch/push 失败
 
@@ -190,38 +190,32 @@ repository URL / target ref / expected commit 与现有 workspace metadata 不�
 
 用匹配参数 resume。真想从新 baseline 开始时，先保存重要本地工作，再通过 CWapi maintenance 重建 workspace。
 
-## 仍然出现旧的 `coding_attachment` 工具
+## 缺少 `coding_attachment` 工具
 
 **现象**
 
-ChatGPT Coding app 显示 5 个工具，或仍列出 `coding_attachment`。
+ChatGPT Coding app 只显示 5 个工具，没有 `coding_attachment`。
 
 **可能原因**
 
-当前连接的是旧版 server/catalog，而不是 CWapi 2.0.5 的 Coding route。
+当前连接的是旧版 server/catalog，而不是 CWapi 2.0.6 的 Coding route。
 
 **怎么修**
 
-确认 CWapi 2.0.5 和 Coding Tunnel 正在运行，重新连接 Coding app，并核对准确的 5 工具 catalog。Coding MCP 已不再传输文件或图片。
-
-## `AGENT_FILE_ATTACHMENTS_UNSUPPORTED`
+确认 CWapi 2.0.6 和 Coding Tunnel 正在运行，重新连接 Coding app，并核对 6 个工具：`coding_open`、`coding_exec`、`coding_status`、`coding_attachment`、`coding_close`、`load_skill`。
+## `AGENT_IMAGE_ATTACHMENT_REQUIRED`
 
 **现象**
 
-本地 Agent 请求返回 `AGENT_FILE_ATTACHMENTS_UNSUPPORTED`。
+本地 Agent 请求返回 `AGENT_IMAGE_ATTACHMENT_REQUIRED`。
 
 **可能原因**
 
-客户端发送了 CWapi 不支持的 generic top-level `attachments` 文件扩展。
-
-**检查什么**
-
-看客户端实际 request shape。Agent 只接受文本与 tool JSON。
+CWapi 顶层 `attachments` 中存在不是受支持 inline 栅格图片的项目。
 
 **怎么修**
 
-去掉顶层 `attachments` 字段。上下文改用文本提供，或由本地软件自己的工具读取本地数据。
-
+`attachments` 只放受支持的 inline 栅格图片；非图片数据改用文本或 tool result 提供。普通文件不会通过 Agent MCP 传输。
 ## `AGENT_MEDIA_INPUT_UNSUPPORTED`
 
 **现象**
@@ -230,11 +224,11 @@ ChatGPT Coding app 显示 5 个工具，或仍列出 `coding_attachment`。
 
 **可能原因**
 
-Chat Completions message content 中存在非 `text` part，例如 `image_url`。
+Chat Completions message content 中存在既不是 `text`、也不是受支持 inline raster `image_url` data URI 的 part。
 
 **怎么修**
 
-只发送文本 message content 与 tool JSON。CWapi 不会通过 Agent MCP 入队或返回文件/图片 content。
+使用文本/tool JSON，或受支持的 inline raster `image_url` data URI。远程图片 URL 会单独返回 `AGENT_IMAGE_URL_UNSUPPORTED`；普通文件仍不支持。
 
 ## Agent Provider 401 `invalid_api_key`
 
@@ -399,3 +393,5 @@ CWapi-data/workspaces/
 只收集真正相关的信息：错误码、CWapi/Tunnel 当前状态、适用时的 `coding_status`，以及 Agent 本地 HTTP status。不要公开 MCP token、Agent API key、Tunnel Runtime API key 或 private repository credential。
 
 同时可参考 [常见问题](FAQ.zh-CN.md)、[Coding 指南](CODING_GUIDE.zh-CN.md)、[Agent 指南](AGENT_GUIDE.zh-CN.md) 和 [Operations](OPERATIONS.md)。
+
+

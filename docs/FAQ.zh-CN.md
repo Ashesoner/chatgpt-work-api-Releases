@@ -1,4 +1,4 @@
-# CWapi 2.0 常见问题
+﻿# CWapi 2.0 常见问题
 
 [English](FAQ.md) | [简体中文](FAQ.zh-CN.md)
 
@@ -155,11 +155,11 @@ CODING_WORKSPACE_BUSY
 
 ## Coding MCP 能传文件或图片吗？
 
-不能。正式 Coding catalog 只有 `coding_open`、`coding_exec`、`coding_status`、`coding_close`。源码、Markdown、JSON、日志等文本可用有界 `coding_exec` 读取；Coding MCP 不产生 `ImageContent` 或 `EmbeddedResource`。
+栅格图片可以，普通文件不行。Coding catalog 包含 `coding_attachment`，它从 active workspace 读取受限栅格图片，并以原生 `ImageContent` 返回原始 bytes/MIME。源码、Markdown、JSON、日志等文本仍通过有界 `coding_exec` 读取；普通文件不会生成 `EmbeddedResource`。
 
 ## Agent 能接收文件或图片吗？
 
-不能。Agent 只接受文本与 tool JSON。顶层 `attachments` 返回 `AGENT_FILE_ATTACHMENTS_UNSUPPORTED`；`image_url` 等任何非文本 message content part 都会在进入 broker 前返回 `AGENT_MEDIA_INPUT_UNSUPPORTED`。
+栅格图片可以，普通文件不行。Agent 支持 `data:` `image_url` 和 CWapi inline image attachment 中的栅格图片；远程图片 URL、SVG、PDF、压缩包、Office 文件等普通文件仍不支持。
 
 ## 在 ChatGPT 对话里上传文件，会自动进入本地 workspace 或 Agent 客户端吗？
 
@@ -238,3 +238,4 @@ request、streaming、tool_calls 与错误码见 [Agent 指南](AGENT_GUIDE.zh-C
 - [版本选择指南](VERSION_GUIDE.zh-CN.md)
 - [从 1.6 迁移](MIGRATION_FROM_1.6.zh-CN.md)
 - [安全说明](SECURITY.md)
+
