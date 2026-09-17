@@ -4,15 +4,29 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
+
+	"github.com/AAAYNMMM/CWapi/internal/repository"
 )
 
+type WorkspaceEntry struct {
+	Repository string `json:"repository"`
+	TargetRef  string `json:"target_ref"`
+	Branch     string `json:"branch"`
+}
+
 type IndexSnapshot struct {
-	RepositoryCount int      `json:"repository_count"`
-	Repositories    []string `json:"repositories,omitempty"`
-	InvalidEntries  int      `json:"invalid_entries,omitempty"`
+	RepositoryCount int              `json:"repository_count"`
+	Repositories    []string         `json:"repositories,omitempty"`
+	Workspaces      []WorkspaceEntry `json:"workspaces,omitempty"`
+	InvalidEntries  int              `json:"invalid_entries,omitempty"`
 }
 
 // Index reads durable workspace metadata only. It never fetches or mutates Git.
+// Both V1 branch-aware and legacy repository-only containers are recognized,
+// but only when their metadata is valid and the directory key matches that
+// metadata. Duplicate legacy/V1 copies of the same identity collapse to one
+// public entry; maintenance resolution still prefers the V1 container.
 func (m *Manager) Index() IndexSnapshot {
 	if m == nil {
 		return IndexSnapshot{}
@@ -21,7 +35,8 @@ func (m *Manager) Index() IndexSnapshot {
 	if err != nil {
 		return IndexSnapshot{}
 	}
-	seen := map[string]struct{}{}
+	repositoriesSeen := map[string]struct{}{}
+	workspacesSeen := map[string]WorkspaceEntry{}
 	invalid := 0
 	for _, entry := range entries {
 		if !entry.IsDir() {
@@ -32,16 +47,56 @@ func (m *Manager) Index() IndexSnapshot {
 			invalid++
 			continue
 		}
-		if meta.Repository == "" {
+		workspaceEntry, identity, ok := indexEntry(meta)
+		if !ok {
 			invalid++
 			continue
 		}
-		seen[meta.Repository] = struct{}{}
+		if entry.Name() != WorkspaceKey(identity) && entry.Name() != legacyWorkspaceKey(identity.Repository) {
+			invalid++
+			continue
+		}
+		repositoriesSeen[workspaceEntry.Repository] = struct{}{}
+		workspacesSeen[WorkspaceKey(identity)] = workspaceEntry
 	}
-	repositories := make([]string, 0, len(seen))
-	for repository := range seen {
-		repositories = append(repositories, repository)
+
+	repositories := make([]string, 0, len(repositoriesSeen))
+	for repositoryName := range repositoriesSeen {
+		repositories = append(repositories, repositoryName)
 	}
 	sort.Strings(repositories)
-	return IndexSnapshot{RepositoryCount: len(repositories), Repositories: repositories, InvalidEntries: invalid}
+
+	workspaces := make([]WorkspaceEntry, 0, len(workspacesSeen))
+	for _, entry := range workspacesSeen {
+		workspaces = append(workspaces, entry)
+	}
+	sort.Slice(workspaces, func(i, j int) bool {
+		if workspaces[i].Repository != workspaces[j].Repository {
+			return workspaces[i].Repository < workspaces[j].Repository
+		}
+		return workspaces[i].TargetRef < workspaces[j].TargetRef
+	})
+	return IndexSnapshot{
+		RepositoryCount: len(repositories),
+		Repositories:    repositories,
+		Workspaces:      workspaces,
+		InvalidEntries:  invalid,
+	}
+}
+
+func indexEntry(meta metadata) (WorkspaceEntry, WorkspaceIdentity, bool) {
+	repositoryName := strings.ToLower(strings.TrimSpace(meta.Repository))
+	parsed, err := repository.Parse("https://github.com/" + repositoryName)
+	if err != nil || parsed.Repository != repositoryName {
+		return WorkspaceEntry{}, WorkspaceIdentity{}, false
+	}
+	identity, err := NewWorkspaceIdentity(repositoryName, meta.TargetRef)
+	if err != nil || identity.TargetRef != strings.TrimSpace(meta.TargetRef) {
+		return WorkspaceEntry{}, WorkspaceIdentity{}, false
+	}
+	branch := strings.TrimPrefix(identity.TargetRef, "refs/heads/")
+	if branch == "" || branch == identity.TargetRef {
+		return WorkspaceEntry{}, WorkspaceIdentity{}, false
+	}
+	return WorkspaceEntry{Repository: identity.Repository, TargetRef: identity.TargetRef, Branch: branch}, identity, true
 }

@@ -2,7 +2,7 @@
 
 [English](CODING_GUIDE.md) | [简体中文](CODING_GUIDE.zh-CN.md)
 
-CWapi Coding gives Web GPT a small MCP surface for operating one durable local Git workspace per canonical repository. Web GPT remains the planner and reasoning agent throughout the task.
+CWapi Coding gives Web GPT a small MCP surface for operating durable local Git workspaces identified by canonical repository + canonical branch target. Web GPT remains the planner and reasoning agent throughout the task.
 
 ## Architecture
 
@@ -31,7 +31,7 @@ coding_status
 coding_close
 ```
 
-Web GPT never receives or stores a public Coding session ID. Every later operation selects the active internal session through the same canonical `repository_url`.
+Web GPT never receives or stores a public Coding session ID. `coding_open` always selects a workspace with `repository_url + target_ref`; later exec/status/close calls should also include the matching `target_ref` whenever more than one branch of that repository may be active.
 
 ## Recommended end-to-end workflow
 
@@ -78,7 +78,7 @@ Use the GitHub repository URL for the repository you want CWapi to manage. CWapi
 
 ### `target_ref`
 
-`target_ref` is required and must resolve as a valid branch. CWapi canonicalizes it to `refs/heads/<branch>`, fetches that branch from `origin`, and prepares a detached worktree at the resolved commit.
+`target_ref` is required and must be a valid branch. CWapi canonicalizes it to `refs/heads/<branch>`, fetches that branch from `origin`, and prepares a local tracking branch. A clean branch with no local/diverged commits may fast-forward; detached HEAD is not the normal prepared state.
 
 Examples:
 
@@ -127,39 +127,40 @@ This is exactly what makes a new ChatGPT conversation able to continue unfinishe
 
 ## Active session ownership and `CODING_WORKSPACE_BUSY`
 
-One canonical repository can have at most one active Coding session.
+One canonical repository can have multiple active Coding sessions when their canonical target refs differ. One repository + one canonical target ref still has at most one active Coding session.
 
-If that repository is already active:
+If that repository + target ref is already active:
 
 - compatible `coding_open(..., resume=true)` reuses the existing internal session;
 - `resume=false` returns `CODING_WORKSPACE_BUSY`;
 - opening/closing state, incompatible target ref, or incompatible expected commit is not silently adopted;
 - if a `coding_exec` is already running, the resumed/open result may report a `busy` state.
 
-Do not work around this by changing URL spelling or cloning the same repository elsewhere. Use the same `repository_url` and resume the real active session.
+Do not work around same-branch ownership by changing URL spelling. Use the same `repository_url + target_ref` and resume the real active session. Opening a different branch of the same repository is allowed and creates/uses a separate branch-aware workspace.
 
 ## Durable workspace location and lifetime
 
 The workspace root is adjacent to the portable installation:
 
 ```text
-CWapi-data/workspaces/<sha256-derived-repository-key>/repo
+CWapi-data/workspaces/<workspace-hash>/repo
 ```
 
 Metadata lives beside it as `workspace.json`.
 
 The workspace is intentionally durable across Coding session closes and ChatGPT conversation changes. `coding_close` does not delete it.
 
-The Desktop maintenance action can delete a selected durable workspace when the user intentionally wants to rebuild it. Deleting a workspace loses local/uncommitted work in that workspace.
+The existing Desktop workspace manager lists repository + branch, can open the backend-resolved `<workspace>/repo` folder, and can delete/rebuild one selected branch. The frontend does not construct local paths or hashes. Legacy repository-only workspaces are not auto-migrated and are resolved only when their metadata exactly matches repository + target ref. Deleting a workspace loses local/uncommitted work in that selected branch.
 
 ## `coding_exec`
 
-`coding_exec` runs exactly one development command in the active repository workspace.
+`coding_exec` runs exactly one development command in the selected active branch workspace. `target_ref` is optional for backward compatibility: repository-only calls work when exactly one branch is active, return `CODING_SESSION_AMBIGUOUS` when multiple branches are active, and an explicitly named inactive branch returns `CODING_SESSION_NOT_ACTIVE` without fallback.
 
 Conceptual input:
 
 ```text
 repository_url
+target_ref?       # optional selector; strongly recommended for branch-aware calls
 command
 argv[]
 cwd?             # optional directory inside the prepared repository
@@ -237,7 +238,7 @@ The bundled portable includes its own Git runtime and the Codex command toolhost
 
 ## `coding_status`
 
-Use `coding_status(repository_url)` when you need Git/workspace truth, especially:
+Use `coding_status(repository_url, target_ref?)` when you need Git/workspace truth. It uses the same branch routing as exec: one active branch permits repository-only compatibility, multiple active branches require `target_ref`, and a missing named target never falls back. Especially:
 
 - after meaningful edits;
 - before commit/push;
@@ -305,8 +306,8 @@ Coding MCP does not transfer files or images. Inspect source, Markdown, JSON, co
 At real task completion:
 
 ```text
-coding_status(repository_url)
-coding_close(repository_url)
+coding_status(repository_url, target_ref)
+coding_close(repository_url, target_ref)
 ```
 
 Closing:
@@ -324,17 +325,30 @@ A later task can intentionally resume the existing compatible workspace with `re
 ```text
 1. User: fix a bug in https://github.com/acme/widget on main.
 2. Web GPT: coding_open(repository_url, target_ref="main", expected_commit=<known SHA>).
-3. Web GPT: coding_exec rg/search for the failure path.
+3. Web GPT: coding_exec(repository_url, target_ref="main", ...) rg/search for the failure path.
 4. Web GPT: coding_exec bounded reads of relevant files.
 5. Web GPT: coding_exec edit script/command.
 6. Web GPT: coding_exec narrow test.
 7. Web GPT: coding_exec broader test if justified.
-8. Web GPT: coding_status.
+8. Web GPT: coding_status(repository_url, target_ref="main").
 9. If user requested commit/push, operator switches FULL.
-10. Web GPT: coding_exec git status/diff --check, then authorized git commit/push.
-11. Web GPT: coding_status final verification.
-12. Web GPT: coding_close.
+10. Web GPT: coding_exec(repository_url, target_ref="main", ...) git status/diff --check, then authorized git commit/push.
+11. Web GPT: coding_status(repository_url, target_ref="main") final verification.
+12. Web GPT: coding_close(repository_url, target_ref="main").
 ```
+
+## Example: same repository, two active branches
+
+```text
+coding_open(repository_url=<repo>, target_ref="branch-a")
+coding_open(repository_url=<repo>, target_ref="branch-b")
+
+coding_exec(repository_url=<repo>, target_ref="branch-a", ...)
+coding_status(repository_url=<repo>, target_ref="branch-b")
+coding_close(repository_url=<repo>, target_ref="branch-a")
+```
+
+If `branch-a` and `branch-b` are both active, omitting `target_ref` from exec/status/close returns `CODING_SESSION_AMBIGUOUS`. Naming a non-active branch returns `CODING_SESSION_NOT_ACTIVE`; CWapi never falls back to another branch.
 
 ## Related documentation
 

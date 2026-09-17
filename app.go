@@ -36,6 +36,20 @@ type OpenAITunnelInfo struct {
 	State         string `json:"state"`
 }
 
+const (
+	secondInstanceDialogTitle   = "CWapi 已在运行"
+	secondInstanceDialogMessage = "检测到另一个 CWapi 启动请求。\n" +
+		"为避免端口、Tunnel、运行时状态和工作区冲突，\n" +
+		"CWapi 只允许同时运行一个实例。\n" +
+		"请先退出当前 CWapi，再启动另一个版本。"
+)
+
+var (
+	secondInstanceWindowUnminimise = wailsruntime.WindowUnminimise
+	secondInstanceWindowShow       = wailsruntime.Show
+	secondInstanceMessageDialog    = wailsruntime.MessageDialog
+)
+
 type App struct {
 	mu            sync.RWMutex
 	reconfigureMu sync.Mutex
@@ -92,7 +106,21 @@ func (a *App) shutdown(context.Context) {
 	}
 }
 
-func (a *App) onSecondInstanceLaunch(_ options.SecondInstanceData) { a.showMainWindow() }
+func (a *App) onSecondInstanceLaunch(_ options.SecondInstanceData) {
+	a.mu.RLock()
+	ctx := a.ctx
+	a.mu.RUnlock()
+	if ctx == nil {
+		return
+	}
+	secondInstanceWindowUnminimise(ctx)
+	secondInstanceWindowShow(ctx)
+	_, _ = secondInstanceMessageDialog(ctx, wailsruntime.MessageDialogOptions{
+		Type:    wailsruntime.WarningDialog,
+		Title:   secondInstanceDialogTitle,
+		Message: secondInstanceDialogMessage,
+	})
+}
 
 func (a *App) showMainWindow() {
 	a.mu.RLock()

@@ -63,7 +63,7 @@ CWapi 2.0 的 Coding 和 Agent 都不使用 Slack。
 
 两代都有持久化/workspace 概念，但实现和目录 contract 不同。
 
-不要把 1.6 workspace 直接复制到 `CWapi-data/workspaces/<repository-hash>/repo`，然后假设 2.0 会把它当成兼容 workspace。重要本地工作应先通过 Git commit/push 或单独备份保留下来，再让 2.0 自己创建和管理 workspace。
+不要把 1.6 workspace 直接复制到 `CWapi-data/workspaces/<workspace-hash>/repo`，然后假设 2.0 会把它当成兼容 workspace。重要本地工作应先通过 Git commit/push 或单独备份保留下来，再让 2.0 自己创建和管理 workspace。
 
 ## 2.0 新增、需要重新配置的概念
 

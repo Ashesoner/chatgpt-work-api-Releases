@@ -65,15 +65,15 @@ Foreground `coding_exec` remains bounded and cleans its process tree when it com
 
 ## Workspace recovery
 
-An interrupted Coding task leaves the durable workspace intact. A ChatGPT conversation ending does not automatically close the CWapi Coding session. If the same repository already has an active session, a new conversation should call compatible `coding_open(..., resume=true)`; CWapi reuses the active internal session without preparing a second workspace or requiring a public session ID.
+An interrupted Coding task leaves the durable workspace intact. A ChatGPT conversation ending does not automatically close the CWapi Coding session. If the same repository + target ref already has an active session, a new conversation should call compatible `coding_open(..., resume=true)`; CWapi reuses that branch's active internal session without preparing a second workspace or requiring a public session ID. Different branches of one repository may remain active concurrently.
 
-`resume=false` against an active repository still returns `CODING_WORKSPACE_BUSY`. New preparation checks out or creates the local target branch with origin tracking and only fast-forwards a clean branch with no local/diverged commits. Dirty work and local history are never reset implicitly. Direct local-destructive Git commands create bounded `refs/cwapi/safety/*` recovery refs when possible. A clean workspace with metadata interrupted during write is repaired by the next non-resume `coding_open`; resume still refuses to guess a corrupt context. Use the Desktop maintenance overlay only when the repository and its corresponding runtime cache should be deleted/rebuilt; this loses uncommitted local work in that selected workspace.
+`resume=false` against an active repository + target ref still returns `CODING_WORKSPACE_BUSY`. New preparation checks out or creates the local target branch with origin tracking and only fast-forwards a clean branch with no local/diverged commits. Dirty work and local history are never reset implicitly. Direct local-destructive Git commands create bounded `refs/cwapi/safety/*` recovery refs when possible. A clean workspace with metadata interrupted during write is repaired by the next non-resume `coding_open`; resume still refuses to guess a corrupt context. Use the Desktop maintenance overlay only when a selected repository + branch should be opened or deleted/rebuilt. Delete/Rebuild is branch-scoped and loses uncommitted local work in that selected workspace; legacy repository-only workspaces are never auto-migrated and are manageable only when metadata exactly matches repository + target ref.
 
 ## Move or upgrade
 
 Moving the entire extracted directory moves its adjacent `CWapi-data`. Moving only the clean program/runtime creates a fresh data root in the new location.
 
-Before replacing a version, close active sessions and back up any unpushed workspace changes. Do not copy `CWapi-data` into a release ZIP.
+Before replacing 2.0.5 with branch-aware V1, close active sessions, exit CWapi, and back up the complete `CWapi-data` plus any unpushed workspace changes. Keep the original 2.0.5 installation for rollback. Legacy repository-only workspace directories are not auto-migrated. To roll back, exit V1, restore the pre-upgrade `CWapi-data` backup beside the original 2.0.5 build, then start that original build. Do not copy `CWapi-data` into a release ZIP.
 
 ## Failure triage
 

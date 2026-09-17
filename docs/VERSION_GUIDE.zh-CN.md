@@ -23,7 +23,7 @@ CWapi 现在有两条彼此独立的发行路线。它们都在解决“让 Web 
 | Coding 通信 | 直接 Coding MCP tool surface | GitHub + Slack 工作流 |
 | 本地 Provider | 有：localhost OpenAI-compatible `/v1` Agent Provider | 1.6.3 发行路线没有 2.0 这套 Agent Provider contract |
 | Slack | 不需要 | 旧版工作流需要 |
-| Durable workspace | 有，位于 `CWapi-data/workspaces/<repository-hash>/repo` | 1.6.x 有自己的持久化/workspace 模型，不要当成 2.0 兼容目录 |
+| Durable workspace | 有，位于 `CWapi-data/workspaces/<workspace-hash>/repo` | 1.6.x 有自己的持久化/workspace 模型，不要当成 2.0 兼容目录 |
 | GitHub 的作用 | Coding 的 repository source/remote；private auth 使用当前 Windows 用户 Git 凭据 | 旧版 GitHub + Slack 开发工作流的核心组成部分 |
 | Coding 推理 | 只有 Web GPT；bundled Codex 只是 model-free command/exec toolhost | 按 1.6.3 分支自己的文档工作 |
 | OpenAI-compatible Agent bridge | 有 | 1.6.3 没有等价的 2.0 Agent Provider contract |

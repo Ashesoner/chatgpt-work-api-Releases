@@ -116,7 +116,7 @@ git push
 在 CWapi portable 目录旁边：
 
 ```text
-CWapi-data/workspaces/<repository-hash>/repo
+CWapi-data/workspaces/<workspace-hash>/repo
 ```
 
 它是 durable workspace。关闭 Coding session 不会删除它。
@@ -125,23 +125,23 @@ CWapi-data/workspaces/<repository-hash>/repo
 
 可以，只要现有 workspace/session 与目标仓库、branch 等信息兼容。
 
-继续使用同一个 `repository_url`，然后：
+继续使用同一个 `repository_url + target_ref`，然后：
 
 ```text
 coding_open(..., resume=true)
 ```
 
-公共 MCP 协议不暴露 Coding session ID。CWapi 内部通过 canonical repository 找到当前 active session。
+公共 MCP 协议不暴露 Coding session ID。CWapi 内部通过 canonical repository + canonical target ref 找到当前 active session；同一仓库不同 branch 可以并行 active。
 
 ## 同一个仓库不用 resume 再 open 会怎样？
 
-如果这个 repository 仍有 active Coding session，`resume=false` 会返回：
+如果同一 repository + target ref 仍有 active Coding session，`resume=false` 会返回：
 
 ```text
 CODING_WORKSPACE_BUSY
 ```
 
-这是保护机制，不是莫名其妙的脾气。CWapi 不会静默抢占同一仓库的 active state。
+这是同分支保护机制。同一仓库的另一个 branch 可以并行 open。`coding_exec` / `coding_status` / `coding_close` 的 `target_ref` 只为兼容而可选：恰好一个 active branch 时可省略；多个 active branch 省略返回 `CODING_SESSION_AMBIGUOUS`；显式指定未 active branch 返回 `CODING_SESSION_NOT_ACTIVE`，不会 fallback。
 
 ## 升级 CWapi 会删除 workspace 吗？
 
@@ -151,7 +151,15 @@ CODING_WORKSPACE_BUSY
 
 如果只把新的 `CWapi.exe` / `runtime` 放进另一个干净目录，新目录会创建新的 `CWapi-data`。这时旧 workspace 还在原目录，只是新安装看不到，于是看起来像“丢了”。
 
-升级前最好先关闭 active session，并备份重要但还没 push 的修改。
+从原版 2.0.5 升级 branch-aware V1 时，先关闭 active session、退出 CWapi、完整备份 `CWapi-data`，并保留原版 2.0.5。legacy repository-only workspace 不自动迁移。需要 rollback 时退出 V1，把升级前 data 备份恢复到原版旁边，再启动 2.0.5。V1 仍保留较长 workspace hash 路径，缩短路径属于 V1 后低优先级事项。
+
+## GUI 怎么管理不同 branch 的 workspace？
+
+Coding 页打开“管理工作区”。每项显示 repository + branch，并提供“打开文件夹”和分支级“删除并重建”。本地 path/hash 由后端解析，前端不拼接。legacy workspace 不自动迁移。
+
+## 重复启动 CWapi 会怎样？
+
+同一 Windows 权限级别下，Wails SingleInstanceLock 阻止第二个正常实例继续运行，已有 CWapi 会恢复/显示主窗口并弹 Warning。普通权限与管理员权限混合启动属于 Wails/Windows 已知 callback 边界，V1 不新增自定义 IPC。
 
 ## Coding MCP 能传文件或图片吗？
 

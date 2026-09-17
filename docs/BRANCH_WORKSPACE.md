@@ -13,7 +13,7 @@ Target behavior:
 - same repository + different branches: allowed concurrently;
 - same repository + same branch: keep existing busy/resume behavior;
 - different repositories: keep existing behavior;
-- no change to Agent, Tunnel, coding_exec, SAFE/FULL, Network Access, Remote Git Rewrite, Skills, Git safety policy, or Codex ToolHost.
+- no change to Agent, Tunnel, coding_exec execution semantics, SAFE/FULL, Network Access, Remote Git Rewrite, Skills, Git safety policy, or Codex ToolHost; `coding_exec`, `coding_status`, and `coding_close` only gain an optional `target_ref` selector.
 
 ## 2. Workspace identity
 
@@ -39,13 +39,18 @@ ashesoner/bilibili_v_summary + refs/heads/lightweight-timeline
 
 All workspace-related components must use one shared identity/key helper. Directory selection, Coding active/opening ownership, maintenance, and GUI lookup must not implement separate key rules.
 
-## 3. Coding concurrency rules
+## 3. Coding concurrency and routing rules
 
 - `repo + branch-a` and `repo + branch-b` may be active at the same time.
-- a second independent open of `repo + branch-a` must continue to use the original BUSY/resume semantics.
-- close/cleanup/resume must use the same branch-aware identity as open.
+- a second independent open of `repo + branch-a` keeps the original BUSY/resume semantics.
+- open/exec/status/close/cleanup/resume all use the same branch-aware `WorkspaceIdentity` and `WorkspaceKey`.
+- `coding_exec`, `coding_status`, and `coding_close` accept optional `target_ref`.
+- when `target_ref` is present, it is canonicalized with the same rule as workspace identity and routes exactly to that active branch. Missing/non-active target refs return `CODING_SESSION_NOT_ACTIVE`; they never fall back to another branch.
+- when `target_ref` is omitted and the repository has exactly one active branch, the original repository-only behavior is preserved.
+- when `target_ref` is omitted and the repository has more than one active branch, routing returns `CODING_SESSION_AMBIGUOUS`; no newest/oldest/arbitrary branch is selected.
+- MCP remains stateless and no public session ID is introduced.
 
-All uses of Coding `active`, `opening`, and equivalent repository-key lookups must be reviewed together to avoid stale BUSY entries or deleting another branch session's ownership.
+All uses of Coding `active`, `opening`, `finalizeClose`, resume, lookup, and cleanup ownership must use the same branch-aware identity rule to avoid stale BUSY entries or deleting another branch session's ownership.
 
 ## 4. Workspace GUI
 
@@ -63,9 +68,27 @@ Actions:
 - Open Folder: open that workspace's `repo` directory in the OS file manager.
 - Delete and Rebuild: target only that repository + branch workspace.
 
-The existing repository summary/index fields should remain available for compatibility. A new structured workspace list should be added rather than replacing existing repository-only fields.
+The existing repository summary/index fields remain available for compatibility:
 
-V1 intentionally keeps the existing conservative maintenance lock: destructive workspace maintenance remains blocked while Coding activity is present. Branch-scoped maintenance locking can be considered later.
+```text
+RepositoryCount
+Repositories []string
+InvalidEntries
+```
+
+The index additionally exposes a structured list whose entries contain only:
+
+```text
+repository
+target_ref
+branch
+```
+
+Local workspace paths and hash/container names are intentionally not exposed to the frontend. The GUI sends only repository + target ref back to the backend, so a future workspace-key/path-length change does not require frontend path logic.
+
+Open Folder and Delete/Rebuild resolve the physical workspace on the backend. Resolution first checks the exact branch-aware `WorkspaceKey(repository,target_ref)`. A legacy repository-only container is considered only when the branch-aware container does not exist, and legacy metadata must match both `repository` and canonical `target_ref` exactly. A repository match alone is never sufficient and no request falls back to another branch.
+
+V1 intentionally keeps the existing conservative maintenance lock: destructive workspace maintenance remains blocked while Coding activity is present. Branch-scoped maintenance locking can be considered later. Open Folder is non-destructive but is serialized with desktop maintenance so it cannot race a delete operation.
 
 ## 5. Old workspace compatibility
 
@@ -79,15 +102,31 @@ Upgrade behavior:
 2. keep the old CWapi installation available for rollback;
 3. start the modified build only after the original CWapi process has exited;
 4. first open of a branch under V1 creates/uses the branch-aware workspace format;
-5. old workspace directories are left untouched until the user intentionally cleans them up.
+5. old workspace directories are left untouched until the user intentionally cleans them up;
+6. legacy workspaces remain manageable only when their `workspace.json` repository and target ref exactly identify the requested branch.
 
 ## 6. Original CWapi and modified CWapi conflict prevention
 
-The modified build must not run alongside another CWapi instance.
+CWapi continues to use Wails `SingleInstanceLock` with the existing normal/probe instance IDs. V1 does not add process scanning, a second mutex/file lock, named mutex, custom IPC, preflight process checks, or an explicit quit path for the second process.
 
-At startup, reuse CWapi/Wails existing single-instance mechanism where possible. If another instance is already running, show a clear dialog explaining that concurrent CWapi instances may conflict through ports, Tunnel state, runtime state, and workspace data, then exit the newly launched instance.
+The formal V1 target is: **guarantee single-instance conflict isolation; when a V1 build is already the primary instance, provide an explicit WarningDialog. If an original 2.0.5 build is already the primary instance, a later V1 launch is still rejected by Wails, but the V1 warning is not guaranteed.**
 
-Do not rely only on process-name enumeration unless the existing single-instance mechanism cannot provide the required behavior.
+When a V1 build is already running at the same Windows privilege level, Wails owns the second-instance rejection and the V1 primary receives `OnSecondInstanceLaunch`, restores/shows its main window, and displays a Wails `runtime.MessageDialog` warning:
+
+```text
+CWapi 已在运行
+
+检测到另一个 CWapi 启动请求。
+为避免端口、Tunnel、运行时状态和工作区冲突，
+CWapi 只允许同时运行一个实例。
+请先退出当前 CWapi，再启动另一个版本。
+```
+
+`CWAPI_GUI_PROBE_CONFIG` continues to select the independent probe instance ID, so GUI probe behavior remains isolated from the normal CWapi instance ID.
+
+D0 executable integration verified `original 2.0.5 primary -> V1 second`: the V1 process was rejected without starting a second MCP/service, Tunnel client, or listener. No V1 WarningDialog is required in this direction because the already-running original process owns the second-instance callback and does not contain the V1 warning logic.
+
+Windows/Wails single-instance notification can have a boundary between processes running at different privilege/elevation levels. V1 does not replace Wails IPC to bridge that boundary; same-privilege scenarios are part of final EXE integration testing, while mixed-privilege behavior is documented as a known platform/framework limitation.
 
 ## 7. Development workflow
 
@@ -131,7 +170,15 @@ coding_open(repository_url=<same repo>, target_ref=lightweight-timeline, resume=
 
 Expected result: each branch has a separate durable workspace and can be worked on concurrently.
 
-Opening another independent session for the same repository + same branch should still be blocked or resumed according to existing CWapi semantics.
+After more than one branch of the same repository is active, branch-specific operations use the optional selector:
+
+```text
+coding_exec(repository_url=<same repo>, target_ref=blockgl, ...)
+coding_status(repository_url=<same repo>, target_ref=route-checker)
+coding_close(repository_url=<same repo>, target_ref=lightweight-timeline)
+```
+
+For backward compatibility, omitting `target_ref` still works while that repository has exactly one active branch. If multiple branches are active, repository-only exec/status/close return `CODING_SESSION_AMBIGUOUS`. Opening another independent session for the same repository + same branch remains blocked or resumed according to existing CWapi semantics.
 
 ## 9. Upgrade checklist from upstream/original 2.0.5
 
@@ -191,14 +238,45 @@ This is explicitly **not part of V1**. It should be revisited only after V1 is c
 
 ## 12. Custom changes relative to upstream 2.0.5
 
-Planned V1 changes in this fork:
+Implemented V1 changes in this fork:
 
 1. branch-aware durable workspace identity;
 2. concurrent Coding sessions for different branches of the same repository;
 3. preserve same-branch BUSY/resume behavior;
-4. branch-aware workspace index details;
-5. branch display in workspace management GUI;
-6. Open Folder action for a workspace;
-7. branch-scoped Delete and Rebuild target;
-8. startup conflict notice when another CWapi instance is already running;
+4. branch-aware workspace index details while preserving repository summary fields;
+5. branch display in the existing workspace management GUI;
+6. backend-resolved Open Folder action without exposing local workspace paths to the frontend;
+7. branch-scoped Delete and Rebuild with exact legacy metadata fallback;
+8. single-instance conflict isolation, with an explicit startup WarningDialog when a V1 build is the already-running primary;
 9. tests and upgrade/use documentation.
+
+
+## 13. Release documentation status
+
+Before final executable integration, the public Coding/workspace documentation is aligned to the V1 contract:
+
+- `coding_open` selects repository + target ref;
+- `coding_exec`, `coding_status`, and `coding_close` accept optional `target_ref`;
+- repository-only follow-up calls remain compatible with exactly one active branch, return `CODING_SESSION_AMBIGUOUS` with multiple active branches, and an explicitly named inactive target returns `CODING_SESSION_NOT_ACTIVE` without fallback;
+- user examples show two branches of one repository active concurrently and carry the corresponding target ref through follow-up calls;
+- the existing GUI manages repository + branch entries with backend-resolved Open Folder and branch-scoped Delete/Rebuild;
+- legacy repository-only workspaces are not auto-migrated;
+- the original 2.0.5 upgrade/rollback procedure requires a pre-upgrade `CWapi-data` backup and keeping the original build available;
+- same-privilege duplicate launches use Wails single-instance isolation; a V1 primary handles the callback and shows the explicit warning, while an original 2.0.5 primary may reject the V1 second process without showing the V1 warning; mixed Windows privilege levels remain a documented Wails/Windows boundary;
+- long workspace hash paths remain unchanged and are explicitly deferred to a lower-priority post-V1 design.
+
+Runtime Coding prompt text under `prompts/` has now been reviewed separately and aligned to the same branch-aware routing contract.
+
+## 14. Runtime prompt and frontend audit status
+
+`prompts/coding/core.md` is aligned to V1: workspace identity is repository + canonical target ref; different branches may have independent active sessions; one selected workspace allows one foreground Coding operation at a time; `coding_open` requires `target_ref`; and exec/status/close use the same optional target selector rules as the implementation. When multiple branches of one repository are active, Web GPT is explicitly instructed to keep sending the current conversation's matching `target_ref`. No public `session_id` is introduced. Other Coding runtime prompts were searched and no additional repository-only ownership rule required changes.
+
+Frontend dependency audit was performed without modifying dependency manifests or running an automatic fix. The lockfile installs `vite@7.0.0`, `vitest@3.2.4`, and transitive `@vitest/mocker@3.2.4` as development dependencies. Full `npm audit` reports three vulnerable package entries: Vite (high), Vitest (critical aggregate), and `@vitest/mocker` (moderate). `npm audit --omit=dev` reports zero vulnerabilities, so these packages are absent from the production dependency set embedded into the CWapi runtime; they affect local build/test/dev tooling instead.
+
+Remediation classification:
+
+- Vite: npm audit recommends `7.3.6`; this stays within major 7 and is not a semver-major upgrade.
+- Vitest critical UI-server advisory: patched in `3.2.6`; npm audit recommends `3.2.7`, which is a non-major upgrade from 3.2.4.
+- Vitest / `@vitest/mocker` redirect-mock advisory: upstream marks versions before `4.1.11` as affected and states older 3.x is not planned to receive the fix. Therefore fully clearing the current Vitest-family audit requires moving the Vitest line to at least `4.1.11`, which is a major/breaking-version upgrade from 3.2.4. npm audit's `3.2.7` direct-package suggestion only addresses the older critical Vitest issue; it still resolves `@vitest/mocker@3.2.7`, which remains inside the newer advisory's affected range.
+
+Because `npm audit --omit=dev` is clean and CWapi embeds built `frontend/dist` rather than Node development tooling, these findings do **not block a V1 test build**. They remain a development-toolchain security follow-up, particularly if Vite/Vitest development servers are exposed beyond localhost. No dependency update is performed in V1 C.5.

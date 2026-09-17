@@ -46,11 +46,11 @@ load_skill
 }
 ```
 
-返回 `repository,target_ref,resolved_commit,current_head,tracked_dirty,resumed,state`。MCP 公共协议不暴露 `coding_id`。CWapi 内部仍为每次 active Coding session 生成唯一 internal session ID，并维护 `canonical repository -> active internal session ID` 映射，用于生命周期、并发、取消与 stale-operation 防护。
+返回 `repository,target_ref,resolved_commit,current_head,tracked_dirty,resumed,state`。MCP 公共协议不暴露 `coding_id`。CWapi 内部仍为每个 branch-aware active Coding session 生成唯一 internal session ID，并以 `canonical repository + canonical target_ref` 作为 active workspace identity，用于生命周期、并发、取消与 stale-operation 防护。
 
-一个 repository 同时最多一个 active Coding session。ChatGPT conversation 结束不是 CWapi session 终止信号，因此旧 conversation 消失后 active owner 可能继续存在。
+同一 repository 的不同 branch 可以同时 active；同一 repository + 同一 canonical target ref 仍最多一个 active Coding session。ChatGPT conversation 结束不是 CWapi session 终止信号，因此旧 conversation 消失后该 branch 的 active owner 可能继续存在。
 
-当 repository 已有 active session：
+当相同 repository + target ref 已有 active session：
 
 - `resume=false` 返回 `CODING_WORKSPACE_BUSY`；
 - 兼容的 `resume=true` 复用原 active internal session，不再次 prepare workspace，并返回 `resumed=true`；
@@ -60,13 +60,14 @@ load_skill
 - workspace 正在 opening 时返回 opening/busy 对应错误；
 - session 正在 closing 时返回 `CODING_SESSION_CLOSING`。
 
-`main` 与 `refs/heads/main` 视为同一 heads target。新 Web GPT conversation 只需要再次用同一 `repository_url` 调用兼容的 `coding_open(..., resume=true)`，无需知道旧随机 ID。
+`main` 与 `refs/heads/main` 视为同一 heads target。新 Web GPT conversation 使用同一 `repository_url + target_ref` 调用兼容的 `coding_open(..., resume=true)` 即可恢复该 branch，无需知道旧随机 ID。
 
 ### `coding_exec`
 
 ```json
 {
   "repository_url":"https://github.com/owner/repo",
+  "target_ref":"feature",
   "action":"run",
   "command":"go",
   "argv":["test","./..."],
@@ -75,7 +76,9 @@ load_skill
 }
 ```
 
-省略 `action` 等价于兼容的 foreground `run`，返回 `state,exit_code,stdout,stderr,truncated`。`action=start` 启动 persistent process，并立即返回 `state=running,process_id,pid,started_at`；后续 `action=status` / `action=stop` 只需 `repository_url,process_id`，其调用有界且非阻塞。最多 16 个 persistent process；workspace close 与应用退出会停止其进程树。CWapi 将 `repository_url` 规范化后定位当前 active internal session。同一 internal session 同时只允许一个 active operation。`command` 与 `cwd` 的远端 path syntax 只接受 `/`；argv 逐项传递，不做 shell 拼接。foreground 命令默认超时 120 秒，显式 `timeout_seconds` 范围为 1–600 秒；persistent start 不接受 timeout。
+`target_ref` 可选。指定时按与 `coding_open`/WorkspaceIdentity 相同的 canonical 规则精确路由；目标 branch 不 active 时返回 `CODING_SESSION_NOT_ACTIVE`，不会 fallback 到其它 branch。省略时，仅当该 repository 恰好只有一个 active branch 才保持旧的 repository-only 兼容行为；多个 branch 同时 active 时返回 `CODING_SESSION_AMBIGUOUS`。
+
+省略 `action` 等价于兼容的 foreground `run`，返回 `state,exit_code,stdout,stderr,truncated`。`action=start` 启动 persistent process，并立即返回 `state=running,process_id,pid,started_at`；后续 `action=status` / `action=stop` 继续使用相同的 repository/target selector 与 `process_id`，其调用有界且非阻塞。最多 16 个 persistent process；workspace close 与应用退出会停止其进程树。同一 internal session 同时只允许一个 active operation。`command` 与 `cwd` 的远端 path syntax 只接受 `/`；argv 逐项传递，不做 shell 拼接。foreground 命令默认超时 120 秒，显式 `timeout_seconds` 范围为 1–600 秒；persistent start 不接受 timeout。
 
 调用固定进入 bundled private Codex app-server 的 model-free `command/exec`。它不创建 thread/turn，不调用 Codex agent、auth、account 或 model API。CWapi 在启动前检查解析后的最终 executable/argv/CWD。SAFE 使用 `workspaceWrite`、合成 profile、隔离配置与 workspace-lifetime cache；FULL 使用 `dangerFullAccess` 和剥离内部 secret 后的当前 Windows 用户开发环境。网络能力独立、默认关闭。Remote Git Rewrite 也是独立、默认关闭的高级能力，只放开 direct force/delete remote updates；危险 transport、receive-pack 注入、CWapi safety refs 与内部路径始终拒绝。
 
@@ -84,18 +87,20 @@ load_skill
 ### `coding_status`
 
 ```json
-{"repository_url":"https://github.com/owner/repo"}
+{"repository_url":"https://github.com/owner/repo","target_ref":"feature"}
 ```
+
+`target_ref` 可选，路由规则与 `coding_exec` 相同：精确 target 不存在时返回 `CODING_SESSION_NOT_ACTIVE`；省略时单 active branch 兼容，多 active branch 返回 `CODING_SESSION_AMBIGUOUS`。
 
 返回 `state,repository,target_ref,resolved_commit,current_head,current_branch,detached,tracking_head,tracked_dirty,divergence,last_error`。当 `state=busy` 时额外返回 `active_action,active_command,active_started_at,active_elapsed_seconds`，用于确认当前 foreground operation 是否仍在正常运行。为避免命令参数中的 token、密钥或其它敏感值被状态接口回显，`argv` 不进入 busy metadata。该操作不 fetch，也不返回 Codex transcript。repository 没有 active session 时返回明确的 not-active 错误。
 
 ### `coding_close`
 
 ```json
-{"repository_url":"https://github.com/owner/repo"}
+{"repository_url":"https://github.com/owner/repo","target_ref":"feature"}
 ```
 
-关闭该 repository 当前 active internal session owner；active operation 会先被取消并等待收口。该操作不 reset/clean workspace，不删除 durable workspace，也不修改或删除用户未提交内容。没有 active session 时返回幂等友好的 `state=no_active_session`。
+`target_ref` 可选，使用与 exec/status 相同的 branch-aware 路由；不会 fallback 到其它 branch。关闭精确选中的 active internal session owner；active operation 会先被取消并等待收口。该操作不 reset/clean workspace，不删除 durable workspace，也不修改或删除用户未提交内容。省略 `target_ref` 且 repository 没有任何 active branch 时返回幂等友好的 `state=no_active_session`；显式指定一个未 active 的 `target_ref` 时返回 `CODING_SESSION_NOT_ACTIVE`，不 fallback。
 
 ### `load_skill`
 

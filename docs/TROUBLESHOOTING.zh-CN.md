@@ -103,15 +103,25 @@ CWapi/2.0/OpenAI/Tunnel/Agent/APIKey
 
 **可能原因**
 
-这个 canonical repository 已经有 active Coding session。
+这个 canonical repository + target ref 已经有 active Coding session。
 
 **检查什么**
 
-调用 `coding_status(repository_url)`，确认当前 active 的确是你想继续的仓库/任务。
+调用 `coding_status(repository_url, target_ref)`，确认当前 active 的确是你想继续的仓库/branch/任务。多个 branch 同时 active 时如果省略 `target_ref`，应预期 `CODING_SESSION_AMBIGUOUS`。
 
 **怎么修**
 
-继续同一个兼容任务时使用 `coding_open(..., resume=true)`。旧任务真的结束了，就先 `coding_close`。不要通过改 URL 拼法来绕过 ownership。
+继续同一个兼容 branch 任务时使用 `coding_open(..., resume=true)`。旧 branch 任务真的结束了，就用 `coding_close(repository_url, target_ref)` 关闭。同仓库不同 branch 可以并行；不要通过改 URL 拼法绕过同分支 ownership。
+
+## `CODING_SESSION_AMBIGUOUS`
+
+**现象**
+
+同一 repository 有多个 active branch 时，只传 repository 的 `coding_exec`、`coding_status` 或 `coding_close` 失败。
+
+**怎么修**
+
+给调用补上目标 `target_ref`。CWapi 不会静默选择最近、最早或任意 branch。指定 target 未 active 时返回 `CODING_SESSION_NOT_ACTIVE`，不会 fallback 到其它 branch。
 
 ## Codex runtime unavailable
 

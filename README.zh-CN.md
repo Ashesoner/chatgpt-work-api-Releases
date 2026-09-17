@@ -100,7 +100,7 @@ Cline、Roo Code 等允许自定义 OpenAI-compatible provider 的客户端**可
 
 - 通过 GitHub repository URL 和 branch ref 打开或恢复仓库。
 - 可选完整 40 位 `expected_commit` 做 exact baseline guard。
-- durable workspace 位于 `CWapi-data/workspaces/<repository-hash>/repo`。
+- durable workspace 位于 `CWapi-data/workspaces/<workspace-hash>/repo`。
 - 通过精确命令读取、搜索源码。
 - 在受管 workspace 中修改项目文件。
 - 运行编译器、测试、脚本、localhost 服务和 Git 命令。
@@ -108,7 +108,8 @@ Cline、Roo Code 等允许自定义 OpenAI-compatible provider 的客户端**可
 - 可能丢弃本地内容的 direct Git 操作前创建有界 `refs/cwapi/safety/*` 恢复点。
 - `coding_exec` 默认前台执行，也支持 `start/status/stop` persistent process 生命周期。
 - `coding_status` 查看 HEAD、tracking HEAD、dirty 与 divergence；前台命令真实处于 busy 时还会返回 action、executable、开始时间和已运行秒数，但不会回显 argv。
-- 新 ChatGPT 对话通过兼容的 `coding_open(..., resume=true)` 继续同一 active repository。
+- 同一 repository 的不同 branch 可使用 branch-aware workspace 并行 active；新 ChatGPT 对话通过兼容的 `coding_open(..., resume=true)` 继续同一 repository + branch。
+- `coding_exec` / `coding_status` / `coding_close` 的 `target_ref` 可选：只有一个 active branch 时保留 repository-only 兼容；多个 active branch 不传 target 时返回 `CODING_SESSION_AMBIGUOUS`；指定未 active target 返回 `CODING_SESSION_NOT_ACTIVE`，不 fallback。
 - 通过 `load_skill(name)` 按需加载启动时缓存的共享任务 Skill；修改 Core/Rules/Skill 后需要重启 CWapi。
 - 源码和其它可检查文本保持在命令链路中；Coding 不提供文件或图片传输工具。
 
@@ -148,11 +149,11 @@ Cline、Roo Code 等允许自定义 OpenAI-compatible provider 的客户端**可
 
 ## Durable workspace
 
-`coding_close` 只关闭当前 active session handle，**不会删除 workspace**。workspace 保存在 portable 旁的 `CWapi-data`，以后可以继续。
+`coding_close` 只关闭选中的 active session handle，**不会删除 workspace**。workspace identity 是 repository + canonical target ref，因此同一仓库不同分支可以在 `CWapi-data` 中独立持久化。GUI 工作区管理会显示 repository + branch，可打开实际 `repo` 文件夹，也可只删除并重建一个分支。
 
 新的 non-resume open 遇到 tracked dirty、local commits 或 divergence 会拒绝，而不是偷偷覆盖。`resume=true` 才表示显式继续兼容的现有 workspace/session。
 
-整体移动解压目录时，旁边的 `CWapi-data` 会一起移动；只移动干净程序/runtime 到新位置，则新位置会创建新的 data root。
+从原版 2.0.5 升级 branch-aware V1 前，应先退出 CWapi 并完整备份 `CWapi-data`；legacy repository-only workspace 保留原地且不会自动迁移。保留原版 2.0.5 作为 rollback；需要回退时先退出 V1，恢复升级前 data 备份，再启动原版。V1 仍使用较长 workspace hash 名称，路径缩短属于 V1 后低优先级事项。
 
 ## 文件与图片
 

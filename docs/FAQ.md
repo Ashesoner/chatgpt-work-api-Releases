@@ -109,7 +109,7 @@ A command already running keeps the profile it started with. The next `coding_ex
 Under the CWapi portable directory:
 
 ```text
-CWapi-data/workspaces/<repository-hash>/repo
+CWapi-data/workspaces/<workspace-hash>/repo
 ```
 
 The workspace is durable. Closing a Coding session does not delete it.
@@ -118,23 +118,23 @@ The workspace is durable. Closing a Coding session does not delete it.
 
 Yes, when the existing workspace/session is compatible.
 
-Use the same `repository_url` and open it with:
+Use the same `repository_url + target_ref` and open it with:
 
 ```text
 coding_open(..., resume=true)
 ```
 
-The public MCP protocol does not expose a Coding session ID. CWapi maps the canonical repository URL to its internal active session.
+The public MCP protocol does not expose a Coding session ID. CWapi maps canonical repository + canonical target ref to its internal active session. Different branches of the same repository may be active concurrently.
 
 ## What happens if I open the same repository again without resume?
 
-If the repository already has an active Coding session, `resume=false` returns:
+If the same repository + target ref already has an active Coding session, `resume=false` returns:
 
 ```text
 CODING_WORKSPACE_BUSY
 ```
 
-This is intentional. CWapi avoids silently creating or stealing competing active state for the same repository.
+This is intentional for the same branch. A different branch of the same repository may be opened concurrently. For `coding_exec` / `coding_status` / `coding_close`, `target_ref` is optional only while exactly one branch is active; with multiple active branches omission returns `CODING_SESSION_AMBIGUOUS`, while an explicitly named inactive branch returns `CODING_SESSION_NOT_ACTIVE` with no fallback.
 
 ## Does upgrading CWapi delete my workspace?
 
@@ -144,7 +144,15 @@ If you move the **entire extracted directory**, including `CWapi-data`, the exis
 
 If you copy only a clean `CWapi.exe`/`runtime` set into another directory, that directory creates a new `CWapi-data`, so the old workspace can appear to have "disappeared" even though it is still in the old directory.
 
-Before upgrading, close active sessions and back up important unpushed work.
+For an original 2.0.5 -> branch-aware V1 upgrade, close active sessions, exit CWapi, back up the complete `CWapi-data`, and keep the original 2.0.5 build. Legacy repository-only workspaces are not auto-migrated. To roll back, exit V1, restore the pre-upgrade data backup beside the original build, then start 2.0.5. The long workspace-hash path remains unchanged in V1 and is a lower-priority post-V1 item.
+
+## How do I manage branch workspaces in the GUI?
+
+Open **Manage Workspaces** on the Coding page. Each item shows repository + branch and provides **Open Folder** and branch-scoped **Delete and Rebuild**. Paths/hashes are resolved only by the backend. Legacy workspaces are not auto-migrated.
+
+## What happens if I start CWapi twice?
+
+At the same Windows privilege level, Wails SingleInstanceLock keeps the second normal instance from running, restores/shows the existing CWapi window, and displays a warning. Mixed normal/elevated launches are a known Wails/Windows callback boundary; V1 does not add custom IPC for that case.
 
 ## Can Coding MCP transfer files or images?
 

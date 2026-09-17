@@ -51,15 +51,15 @@ Coding MCP 对外暴露五个工具：`coding_open`、`coding_exec`、`coding_st
 
 Coding 不提供文件或图片 MCP 传输。文本、源码、JSON、日志等需要的 workspace 内容通过 exact `coding_exec` 获取。
 
-一个 repository 同时最多一个 active coding handle。首次使用 clone，后续 fetch；`expected_commit` 如提供则必须是目标 ref 解析出的完整 SHA。新任务遇到 tracked dirty 会拒绝，`resume=true` 可保留工作树继续。
+Workspace identity 是 canonical repository + canonical target ref。同一 repository 的不同 branch 可以有独立 active coding handle；同一 repository + 同一 branch 仍保持单 active handle / BUSY-resume 保护。首次使用 clone，后续 fetch；`expected_commit` 如提供则必须是目标 ref 解析出的完整 SHA。新任务遇到 tracked dirty 会拒绝，`resume=true` 可保留对应 branch worktree 继续。
 
 ### Active handle rediscovery
 
 ChatGPT conversation 的生命周期与 CWapi Coding session 生命周期不是同一个东西。Web GPT 对话关闭或丢失时，CWapi 收不到可靠的“这个 conversation 已结束”信号，因此不能依赖 conversation close 自动释放 repository owner。
 
-如果同一 repository 已有 active session，新的 Web GPT conversation 使用兼容的 `coding_open(..., resume=true)` 时，Coding service 通过 canonical repository 找到并复用原 active internal session，不重复 prepare workspace。Web GPT 不接收也不恢复随机 session ID；内部 generation 仍用于并发、取消、close race 与 stale-operation 防护。
+如果同一 repository + target ref 已有 active session，新的 Web GPT conversation 使用兼容的 `coding_open(..., resume=true)` 时，Coding service 通过 branch-aware workspace identity 找到并复用原 active internal session，不重复 prepare workspace。Web GPT 不接收也不恢复随机 session ID；内部 generation 仍用于并发、取消、close race 与 stale-operation 防护。
 
-`resume=false` 仍保持 one-active-session protection 并返回 `CODING_WORKSPACE_BUSY`。正在 opening/closing 的 session 或 target ref / expected commit 不兼容的请求不会被静默接管。
+`resume=false` 仍对同一 repository + target ref 保持 one-active-session protection 并返回 `CODING_WORKSPACE_BUSY`。正在 opening/closing 的 session 或 target ref / expected commit 不兼容的请求不会被静默接管。
 
 Web GPT 是 Coding 链唯一的推理 agent。每次 `coding_exec` 都把严格 `command + argv + repository cwd` 发送到私有 app-server 的 `command/exec`；不创建 Codex thread/turn，不调用 auth/account/model API，也不读取用户 `~/.codex`。每条命令使用独立临时 CODEX_HOME，结束后删除。省略 `action` 是 foreground `run`；`start/status/stop` 将长期命令交给 Host process manager，workspace close 与应用退出统一回收。
 
@@ -114,7 +114,7 @@ Tunnel Runtime API key 不进入 config；启用后由 Service 从各自的 Wind
 
 ## Workspace maintenance
 
-Workspace delete/rebuild 只存在于 Desktop maintenance surface，不暴露给 MCP。维护前停止 Service，确认目标位于 workspace root，再删除选定 repository 与对应的 `runtime/workspaces/<hash>` cache；下一次 `coding_open` 自动 clone。
+Workspace maintenance 只存在于 Desktop surface，不暴露给 MCP。GUI 按 repository + target ref 列出 branch-aware workspace，可打开其 `repo` 文件夹，并按 branch 精确 Delete/Rebuild；破坏性维护继续使用全局 busy 策略。后端优先解析 branch-aware key，仅在 metadata 的 repository + target_ref 精确匹配时才允许 legacy repository-only fallback；下一次对应 `coding_open` 自动重建该 branch。
 
 ## Package
 

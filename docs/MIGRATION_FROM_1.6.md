@@ -63,7 +63,7 @@ In 2.0, ChatGPT discovers the public Coding/Agent MCP tools through Secure MCP T
 
 Both generations have persistence/workspace concepts, but the implementations and directory contracts differ.
 
-Do not copy an old 1.6 workspace directory into `CWapi-data/workspaces/<repository-hash>/repo` and assume it is a supported 2.0 workspace. Preserve important local work with Git commits/pushes or a separate backup, then let 2.0 create/manage its own workspace.
+Do not copy an old 1.6 workspace directory into `CWapi-data/workspaces/<workspace-hash>/repo` and assume it is a supported 2.0 workspace. Preserve important local work with Git commits/pushes or a separate backup, then let 2.0 create/manage its own workspace.
 
 ## New 2.0 concepts you must configure
 

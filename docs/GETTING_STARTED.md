@@ -49,7 +49,7 @@ Default configuration includes:
 Repository workspaces appear only after Coding opens a repository:
 
 ```text
-CWapi-data/workspaces/<repository-hash>/repo
+CWapi-data/workspaces/<workspace-hash>/repo
 ```
 
 Tunnel profiles appear after the corresponding Tunnel is configured:
@@ -147,9 +147,9 @@ Web GPT should roughly perform:
 ```text
 coding_open(repository_url, target_ref="main")
         ↓
-coding_status(repository_url)
+coding_status(repository_url, target_ref="main")
         ↓
-optional read-only coding_exec(...)
+optional read-only coding_exec(repository_url, target_ref="main", ...)
 ```
 
 `target_ref` is required and represents a branch. You may also supply a full 40-character `expected_commit` to ensure the fetched branch resolves to exactly the commit you expect.
@@ -158,9 +158,9 @@ For normal read/edit/test work, stay in `SAFE`.
 
 ## 9. How Coding work continues in a new ChatGPT conversation
 
-CWapi does not expose a public Coding session ID. The stable key Web GPT uses is the canonical `repository_url`.
+CWapi does not expose a public Coding session ID. Workspace/session identity is canonical repository + canonical target ref, so different branches of the same repository can be active concurrently.
 
-If the same repository already has a compatible active session/workspace, a later ChatGPT conversation continues with:
+If the same repository + target ref already has a compatible active session/workspace, a later ChatGPT conversation continues with:
 
 ```text
 coding_open(repository_url, target_ref, expected_commit?, resume=true)
@@ -168,7 +168,17 @@ coding_open(repository_url, target_ref, expected_commit?, resume=true)
 
 CWapi reuses the internal active session and returns `resumed=true`. It does not prepare a second workspace.
 
-If you call `resume=false` while that repository is still active, CWapi returns `CODING_WORKSPACE_BUSY` instead of silently stealing the workspace.
+If you call `resume=false` while that same repository + target ref is still active, CWapi returns `CODING_WORKSPACE_BUSY`. Other branches may be opened independently. For later exec/status/close calls, `target_ref` is optional only for compatibility: with one active branch repository-only calls work, with multiple active branches omission returns `CODING_SESSION_AMBIGUOUS`, and a named inactive branch returns `CODING_SESSION_NOT_ACTIVE` without fallback.
+
+### Same repository, two branches
+
+```text
+coding_open(repository_url=<repo>, target_ref="branch-a")
+coding_open(repository_url=<repo>, target_ref="branch-b")
+coding_exec(repository_url=<repo>, target_ref="branch-a", ...)
+coding_status(repository_url=<repo>, target_ref="branch-b")
+coding_close(repository_url=<repo>, target_ref="branch-a")
+```
 
 ## 10. Configure Agent
 

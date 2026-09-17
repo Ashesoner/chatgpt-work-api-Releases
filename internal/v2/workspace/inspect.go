@@ -25,7 +25,7 @@ type Snapshot struct {
 // Inspect reads only local Git/workspace state. It never fetches, checks out,
 // resets, cleans or otherwise changes the durable workspace. TrackingHead is
 // the local refs/remotes/origin/<target> value, not a live network query.
-func (m *Manager) Inspect(ctx context.Context, repositoryURL string) (Snapshot, error) {
+func (m *Manager) Inspect(ctx context.Context, repositoryURL, targetRef string) (Snapshot, error) {
 	if m == nil {
 		return Snapshot{}, errors.New("WORKSPACE_MANAGER_UNAVAILABLE")
 	}
@@ -36,7 +36,11 @@ func (m *Manager) Inspect(ctx context.Context, repositoryURL string) (Snapshot, 
 	if err != nil {
 		return Snapshot{}, err
 	}
-	container := filepath.Join(m.root, workspaceKey(identity.Repository))
+	workspaceIdentity, err := NewWorkspaceIdentity(identity.Repository, targetRef)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	container := filepath.Join(m.root, WorkspaceKey(workspaceIdentity))
 	repoPath := filepath.Join(container, "repo")
 	metadataPath := filepath.Join(container, "workspace.json")
 	info, err := os.Lstat(repoPath)
@@ -58,6 +62,9 @@ func (m *Manager) Inspect(ctx context.Context, repositoryURL string) (Snapshot, 
 	}
 	if meta.Repository != identity.Repository {
 		return Snapshot{}, errors.New("WORKSPACE_METADATA_REPOSITORY_MISMATCH")
+	}
+	if meta.TargetRef != workspaceIdentity.TargetRef {
+		return Snapshot{}, errors.New("WORKSPACE_METADATA_TARGET_MISMATCH")
 	}
 	head, err := m.head(ctx, repoPath)
 	if err != nil || head == "" {

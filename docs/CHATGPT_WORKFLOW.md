@@ -23,9 +23,9 @@ Coding MCP has no file or image transfer tool. Read inspectable repository text 
 A typical turn is:
 
 1. `coding_open(repository_url,target_ref,expected_commit?,resume?)`；
-2. inspect/read/edit/verify with exact `coding_exec(repository_url,command,argv,cwd?,timeout_seconds?)` calls；
-3. inspect HEAD/dirty/divergence with `coding_status(repository_url)` when Git truth is needed；
-4. `coding_close(repository_url)` when the task is genuinely finished。
+2. inspect/read/edit/verify with exact `coding_exec(repository_url,target_ref?,command,argv,cwd?,timeout_seconds?)` calls；
+3. inspect HEAD/dirty/divergence with `coding_status(repository_url,target_ref?)` when Git truth is needed；
+4. `coding_close(repository_url,target_ref?)` when the task is genuinely finished。
 
 The Coding GPT is the only reasoning agent. CWapi sends exact commands to the bundled private Codex app-server `command/exec` development tool; it never sends an instruction to a Codex agent. Pass arguments as an argv array, not as one shell-quoted command string. In SAFE, prefer PowerShell cmdlets and repository tools that work under Windows constrained language mode.
 
@@ -33,13 +33,13 @@ The Coding GPT is the only reasoning agent. CWapi sends exact commands to the bu
 
 A ChatGPT conversation ending is not observable by CWapi and therefore does not automatically close an active Coding session. Web GPT does not receive or remember a random Coding session ID. The public stable identity is the repository URL.
 
-CWapi still creates a unique internal session ID and keeps `canonical repository -> active internal session` ownership. That internal identity remains responsible for concurrent-operation exclusion, cancellation, closing, stale-operation protection and logging; removing the public ID does not remove the internal lifecycle generation.
+CWapi still creates a unique internal session ID and keeps `canonical repository + canonical target_ref -> active internal session` ownership. That internal identity remains responsible for concurrent-operation exclusion, cancellation, closing, stale-operation protection and logging; removing the public ID does not remove the internal lifecycle generation.
 
-At the start of a Coding conversation/task, call `coding_open`. If the repository has no active session, CWapi prepares or resumes the durable workspace and creates an internal session. If the same repository already has an active compatible session, call `coding_open(..., resume=true)`; CWapi reuses that internal session and returns `resumed=true` instead of requiring the caller to recover an old ID. If a command is already running, the returned state may be `busy`.
+At the start of a Coding conversation/task, call `coding_open` with repository + branch. If that repository + target ref has no active session, CWapi prepares or resumes its branch-aware durable workspace and creates an internal session. If the same repository + target ref already has an active compatible session, call `coding_open(..., resume=true)`; CWapi reuses that internal session and returns `resumed=true` instead of requiring the caller to recover an old ID. If a command is already running, the returned state may be `busy`.
 
-`resume=false` keeps repository ownership protection: an already-active repository returns `CODING_WORKSPACE_BUSY`. A workspace still opening, a session closing, or an incompatible ref/expected commit is not silently adopted.
+`resume=false` keeps branch ownership protection: an already-active repository + target ref returns `CODING_WORKSPACE_BUSY`. A workspace still opening, a session closing, or an incompatible ref/expected commit is not silently adopted.
 
-Continue all later Coding calls with the same `repository_url`. Do not open a second workspace for the same repository.
+Continue later Coding calls with the same `repository_url` and, when more than one branch of that repository may be active, the matching `target_ref`. Different branches may be active concurrently. Omitting `target_ref` on exec/status/close is compatible only while that repository has exactly one active branch; multiple active branches return `CODING_SESSION_AMBIGUOUS`, and a named inactive branch returns `CODING_SESSION_NOT_ACTIVE` without fallback.
 
 ### Files and images
 
@@ -57,7 +57,7 @@ Network access is selected independently in either profile. Remote Git Rewrite i
 
 For ordinary bounded work, omit `action` and use foreground `run`. For a development server, watcher, GUI or browser-auth flow, use `action=start`, retain `process_id`, inspect with bounded `action=status`, and finish with `action=stop`. A terminal process state ends polling. Closing the Coding session also stops that workspace's persistent processes.
 
-Call `coding_close(repository_url)` when the task is genuinely finished. Closing releases only the repository active session owner. It does not reset or clean Git, delete uncommitted changes, or delete the durable workspace. If a conversation disappears before close, a later conversation uses the same repository with `coding_open(..., resume=true)`.
+Call `coding_close(repository_url,target_ref?)` when the task is genuinely finished. Closing releases only the selected branch active session owner. It does not reset or clean Git, delete uncommitted changes, or delete the durable workspace. If a conversation disappears before close, a later conversation uses the same repository + target ref with `coding_open(..., resume=true)`.
 
 ## Agent GPT
 

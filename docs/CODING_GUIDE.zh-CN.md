@@ -2,7 +2,7 @@
 
 [English](CODING_GUIDE.md) | [简体中文](CODING_GUIDE.zh-CN.md)
 
-CWapi Coding 给 Web GPT 一组很小的 MCP 工具，让它操作每个 canonical repository 对应的一份 durable 本地 Git workspace。整个任务中，负责分析、规划和决定下一步的一直是 Web GPT。
+CWapi Coding 给 Web GPT 一组很小的 MCP 工具，让它操作由 canonical repository + canonical branch target 共同标识的 durable 本地 Git workspace。整个任务中，负责分析、规划和决定下一步的一直是 Web GPT。
 
 ## 架构
 
@@ -31,7 +31,7 @@ coding_status
 coding_close
 ```
 
-Web GPT 不会拿到、也不需要保存公开 Coding session ID。后续所有调用都继续用同一个 canonical `repository_url` 定位 CWapi 内部 active session。
+Web GPT 不会拿到、也不需要保存公开 Coding session ID。`coding_open` 始终使用 `repository_url + target_ref`；后续 exec/status/close 在同仓库可能有多个 active branch 时也应带对应 `target_ref`。
 
 ## 推荐完整流程
 
@@ -78,7 +78,7 @@ repository_url
 
 ### `target_ref`
 
-`target_ref` 必填，并且必须是有效 branch。CWapi 会 canonicalize 成 `refs/heads/<branch>`，从 `origin` fetch 该 branch，再把受管 worktree checkout 到解析出的 commit，HEAD 为 detached 状态。
+`target_ref` 必填，并且必须是有效 branch。CWapi 会 canonicalize 成 `refs/heads/<branch>`，从 `origin` fetch 该 branch，并准备 local tracking branch。clean 且没有 local/diverged commits 时可 fast-forward；detached HEAD 不是正常 prepare 状态。
 
 例如：
 
@@ -127,39 +127,40 @@ resume **不会**重新 fetch/resync，而是保留当前 workspace，返回当�
 
 ## Active session 与 `CODING_WORKSPACE_BUSY`
 
-一个 canonical repository 同时最多一个 active Coding session。
+一个 canonical repository 可以同时有多个不同 branch 的 active Coding session；但同一 repository + 同一 canonical target ref 仍最多一个 active Coding session。
 
-如果仓库已经 active：
+如果同一 repository + target ref 已经 active：
 
 - 兼容的 `coding_open(..., resume=true)` 会复用内部 session；
 - `resume=false` 返回 `CODING_WORKSPACE_BUSY`；
 - opening/closing、target ref 不兼容或 expected commit 不兼容时不会静默接管；
 - 如果已经有 `coding_exec` 在跑，resume/open 状态可能显示 `busy`。
 
-不要通过换一种 URL 拼法或另外 clone 同一个仓库来绕过。这种“绕过保护”的创意通常只会制造两份互相不知道对方存在的状态。继续使用同一个 `repository_url` 并恢复真正的 active session。
+不要通过换一种 URL 拼法来绕过同分支 ownership。继续使用同一个 `repository_url + target_ref` 并恢复真正的 active session。同一仓库的另一个 branch 可以正常独立 open，它会使用自己的 branch-aware workspace。
 
 ## Durable workspace 路径与生命周期
 
 workspace 位于 portable 旁边：
 
 ```text
-CWapi-data/workspaces/<sha256-derived-repository-key>/repo
+CWapi-data/workspaces/<workspace-hash>/repo
 ```
 
 同一 container 旁边有 `workspace.json` metadata。
 
 Coding session close 或 ChatGPT conversation 结束都不会删除它。
 
-Desktop maintenance 可以在用户明确想重建 workspace 时删除指定 durable workspace。删除就意味着该 workspace 中未推送/未提交的本地工作也一起消失，所以别把“清理”当成治疗焦虑的按钮。
+现有 Desktop 工作区管理会按 repository + branch 列出 workspace，可打开后端解析出的 `<workspace>/repo`，也可只删除并重建选中的 branch。前端不计算本地 path/hash。legacy repository-only workspace 不自动迁移，只有 metadata 的 repository + target_ref 精确匹配时才可解析。删除会同时删除该选中 branch 中未 push/未提交的本地工作。
 
 ## `coding_exec`
 
-`coding_exec` 在 active repository workspace 中执行**一条确定的开发命令**。
+`coding_exec` 在选中的 active branch workspace 中执行**一条确定的开发命令**。`target_ref` 为向后兼容而可选：只有一个 active branch 时 repository-only 调用仍可用；多个 active branch 时不传会返回 `CODING_SESSION_AMBIGUOUS`；显式指定未 active branch 返回 `CODING_SESSION_NOT_ACTIVE`，不会 fallback。
 
 概念输入：
 
 ```text
 repository_url
+target_ref?       # 可选 selector；branch-aware 调用建议显式填写
 command
 argv[]
 cwd?             # 可选，必须在准备好的 repository 内
@@ -237,7 +238,7 @@ portable 自带 Git runtime 和 Codex command toolhost；其它项目 runtime �
 
 ## `coding_status`
 
-需要 Git/workspace 真相时调用 `coding_status(repository_url)`，尤其是：
+需要 Git/workspace 真相时调用 `coding_status(repository_url, target_ref?)`。它与 exec 使用同一 branch 路由：单 active branch 可省略 target，多 active branch 必须指定；指定不存在 target 不会 fallback。尤其是：
 
 - 完成重要修改后；
 - commit/push 之前；
@@ -305,8 +306,8 @@ Coding MCP 不传输文件或图片。源码、Markdown、JSON、配置、日志
 任务真正完成时：
 
 ```text
-coding_status(repository_url)
-coding_close(repository_url)
+coding_status(repository_url, target_ref)
+coding_close(repository_url, target_ref)
 ```
 
 close 只会：
@@ -327,17 +328,30 @@ close 只会：
 ```text
 1. 用户：修复 https://github.com/acme/widget main 上的一个 bug。
 2. Web GPT：coding_open(repository_url, target_ref="main", expected_commit=<已知 SHA>)。
-3. coding_exec 用 rg/search 找到错误路径。
+3. coding_exec(repository_url, target_ref="main", ...) 用 rg/search 找到错误路径。
 4. coding_exec 有界读取相关文件。
 5. coding_exec 用精确脚本/命令修改。
 6. coding_exec 跑最窄测试。
 7. 有必要再跑更广测试。
-8. coding_status。
+8. coding_status(repository_url, target_ref="main")。
 9. 用户要求 commit/push 时，本机切 FULL。
-10. coding_exec 检查 git status / diff --check，再做已授权 commit/push。
-11. coding_status 做最终确认。
-12. coding_close。
+10. coding_exec(repository_url, target_ref="main", ...) 检查 git status / diff --check，再做已授权 commit/push。
+11. coding_status(repository_url, target_ref="main") 做最终确认。
+12. coding_close(repository_url, target_ref="main")。
 ```
+
+## 示例：同仓库两个 branch 并行
+
+```text
+coding_open(repository_url=<repo>, target_ref="branch-a")
+coding_open(repository_url=<repo>, target_ref="branch-b")
+
+coding_exec(repository_url=<repo>, target_ref="branch-a", ...)
+coding_status(repository_url=<repo>, target_ref="branch-b")
+coding_close(repository_url=<repo>, target_ref="branch-a")
+```
+
+当 `branch-a` 与 `branch-b` 都 active 时，exec/status/close 省略 `target_ref` 会返回 `CODING_SESSION_AMBIGUOUS`。指定一个未 active branch 会返回 `CODING_SESSION_NOT_ACTIVE`，CWapi 不会 fallback 到其它 branch。
 
 ## 相关文档
 

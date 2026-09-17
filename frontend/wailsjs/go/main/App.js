@@ -8,8 +8,9 @@ export function ClearOpenAITunnel() { return window['go']['main']['App']['ClearO
 export function ConfigureAgentOpenAITunnel(arg1, arg2) { return window['go']['main']['App']['ConfigureAgentOpenAITunnel'](arg1, arg2); }
 export function ConfigureOpenAITunnel(arg1, arg2) { return window['go']['main']['App']['ConfigureOpenAITunnel'](arg1, arg2); }
 export function ConnectionInfo() { return window['go']['main']['App']['ConnectionInfo'](); }
-export function DeleteWorkspace(arg1) { return window['go']['main']['App']['DeleteWorkspace'](arg1); }
+export function DeleteWorkspace(arg1, arg2) { return window['go']['main']['App']['DeleteWorkspace'](arg1, arg2); }
 export function OpenAITunnelInfo() { return window['go']['main']['App']['OpenAITunnelInfo'](); }
+export function OpenWorkspaceFolder(arg1, arg2) { return window['go']['main']['App']['OpenWorkspaceFolder'](arg1, arg2); }
 export function RegenerateAgentAPIKey() { return window['go']['main']['App']['RegenerateAgentAPIKey'](); }
 export function RegenerateMCPIdentities() { return window['go']['main']['App']['RegenerateMCPIdentities'](); }
 export function RuntimeSnapshot() { return window['go']['main']['App']['RuntimeSnapshot'](); }

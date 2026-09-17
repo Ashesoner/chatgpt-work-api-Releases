@@ -18,7 +18,7 @@ import (
 const openingRepository = "<opening>"
 
 type prepareFunc func(context.Context, workspace.PrepareInput) (workspace.Result, error)
-type inspectFunc func(context.Context, string) (workspace.Snapshot, error)
+type inspectFunc func(context.Context, string, string) (workspace.Snapshot, error)
 type execFunc func(context.Context, string, codextoolhost.ExecInput) (codextoolhost.ExecResult, error)
 type readyFunc func() error
 type stopProcessesFunc func(context.Context, string) error
@@ -42,13 +42,15 @@ type Service struct {
 }
 
 type openingRecord struct {
-	cancel context.CancelFunc
-	done   chan struct{}
+	identity workspace.WorkspaceIdentity
+	cancel   context.CancelFunc
+	done     chan struct{}
 }
 
 type record struct {
 	mu sync.Mutex
 
+	workspaceKey    string
 	repository      string
 	repositoryURL   string
 	path            string
@@ -166,12 +168,16 @@ func (s *Service) Open(ctx context.Context, input mcpserver.CodingOpenInput) (mc
 	if err != nil {
 		return mcpserver.CodingOpenOutput{}, err
 	}
-	repositoryKey := identity.Repository
+	workspaceIdentity, err := workspace.NewWorkspaceIdentity(identity.Repository, input.TargetRef)
+	if err != nil {
+		return mcpserver.CodingOpenOutput{}, err
+	}
+	workspaceKey := workspace.WorkspaceKey(workspaceIdentity)
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	prepareCtx, cancelPrepare := context.WithCancel(ctx)
-	opening := &openingRecord{cancel: cancelPrepare, done: make(chan struct{})}
+	opening := &openingRecord{identity: workspaceIdentity, cancel: cancelPrepare, done: make(chan struct{})}
 
 	s.mu.Lock()
 	if s.closed {
@@ -179,29 +185,29 @@ func (s *Service) Open(ctx context.Context, input mcpserver.CodingOpenInput) (mc
 		cancelPrepare()
 		return mcpserver.CodingOpenOutput{}, errors.New("CODING_SERVICE_CLOSED")
 	}
-	if owner := s.active[repositoryKey]; owner != "" {
+	if owner := s.active[workspaceKey]; owner != "" {
 		if !input.Resume || owner == openingRepository {
 			s.mu.Unlock()
 			cancelPrepare()
-			return mcpserver.CodingOpenOutput{}, fmt.Errorf("CODING_WORKSPACE_BUSY: %s", repositoryKey)
+			return mcpserver.CodingOpenOutput{}, fmt.Errorf("CODING_WORKSPACE_BUSY: %s %s", identity.Repository, workspaceIdentity.TargetRef)
 		}
 		output, resumeErr := s.resumeActiveLocked(input, owner)
 		s.mu.Unlock()
 		cancelPrepare()
 		return output, resumeErr
 	}
-	s.active[repositoryKey] = openingRepository
-	s.opening[repositoryKey] = opening
+	s.active[workspaceKey] = openingRepository
+	s.opening[workspaceKey] = opening
 	s.mu.Unlock()
 
 	defer func() {
 		cancelPrepare()
 		s.mu.Lock()
-		if s.opening[repositoryKey] == opening {
-			delete(s.opening, repositoryKey)
+		if s.opening[workspaceKey] == opening {
+			delete(s.opening, workspaceKey)
 		}
-		if s.active[repositoryKey] == openingRepository {
-			delete(s.active, repositoryKey)
+		if s.active[workspaceKey] == openingRepository {
+			delete(s.active, workspaceKey)
 		}
 		s.mu.Unlock()
 		close(opening.done)
@@ -218,7 +224,7 @@ func (s *Service) Open(ctx context.Context, input mcpserver.CodingOpenInput) (mc
 	if err != nil {
 		return mcpserver.CodingOpenOutput{}, err
 	}
-	if prepared.Repository != repositoryKey || strings.TrimSpace(prepared.Path) == "" {
+	if prepared.Repository != identity.Repository || prepared.TargetRef != workspaceIdentity.TargetRef || strings.TrimSpace(prepared.Path) == "" {
 		return mcpserver.CodingOpenOutput{}, errors.New("CODING_WORKSPACE_REPOSITORY_MISMATCH")
 	}
 
@@ -232,12 +238,12 @@ func (s *Service) Open(ctx context.Context, input mcpserver.CodingOpenInput) (mc
 		codingID = "coding_" + rand.Text()
 	}
 	s.sessions[codingID] = &record{
-		repository: prepared.Repository, repositoryURL: identity.NormalizedURL, path: prepared.Path,
+		workspaceKey: workspaceKey, repository: prepared.Repository, repositoryURL: identity.NormalizedURL, path: prepared.Path,
 		targetRef: prepared.TargetRef, resolvedCommit: prepared.ResolvedCommit,
 		currentHead: prepared.CurrentHead, trackedDirty: prepared.TrackedDirty, resumed: prepared.Resumed,
 		currentBranch: prepared.CurrentBranch, detached: prepared.Detached,
 	}
-	s.active[repositoryKey] = codingID
+	s.active[workspaceKey] = codingID
 	s.mu.Unlock()
 
 	return mcpserver.CodingOpenOutput{
@@ -281,18 +287,13 @@ func (s *Service) resumeActiveLocked(input mcpserver.CodingOpenInput, owner stri
 }
 
 func sameTargetRef(left, right string) bool {
-	left = strings.TrimSpace(left)
-	right = strings.TrimSpace(right)
-	if left == right {
-		return true
-	}
-	left = strings.TrimPrefix(left, "refs/heads/")
-	right = strings.TrimPrefix(right, "refs/heads/")
-	return left == right
+	leftRef, _, leftErr := workspace.CanonicalTargetRef(left)
+	rightRef, _, rightErr := workspace.CanonicalTargetRef(right)
+	return leftErr == nil && rightErr == nil && leftRef == rightRef
 }
 
 func (s *Service) Exec(ctx context.Context, input mcpserver.CodingExecInput) (mcpserver.CodingExecOutput, error) {
-	_, record, err := s.lookupRepository(input.RepositoryURL)
+	_, record, err := s.lookupRepository(input.RepositoryURL, input.TargetRef)
 	if err != nil {
 		return mcpserver.CodingExecOutput{}, err
 	}
@@ -361,7 +362,7 @@ func (r *record) beginOperation(ctx context.Context, action, command string) (co
 }
 
 func (s *Service) Status(ctx context.Context, input mcpserver.CodingStatusInput) (mcpserver.CodingStatusOutput, error) {
-	_, record, err := s.lookupRepository(input.RepositoryURL)
+	_, record, err := s.lookupRepository(input.RepositoryURL, input.TargetRef)
 	if err != nil {
 		return mcpserver.CodingStatusOutput{}, err
 	}
@@ -397,7 +398,7 @@ func (s *Service) Status(ctx context.Context, input mcpserver.CodingStatusInput)
 	if busy || s.inspect == nil {
 		return output, nil
 	}
-	workspaceState, inspectErr := s.inspect(ctx, record.repositoryURL)
+	workspaceState, inspectErr := s.inspect(ctx, record.repositoryURL, record.targetRef)
 	if inspectErr != nil {
 		output.LastError = "WORKSPACE_INSPECT_FAILED: " + inspectErr.Error()
 		return output, nil
@@ -420,7 +421,6 @@ func (s *Service) Close(ctx context.Context, input mcpserver.CodingCloseInput) (
 	if err != nil {
 		return mcpserver.CodingCloseOutput{}, err
 	}
-	repositoryKey := identity.Repository
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -430,24 +430,27 @@ func (s *Service) Close(ctx context.Context, input mcpserver.CodingCloseInput) (
 		s.mu.Unlock()
 		return mcpserver.CodingCloseOutput{}, errors.New("CODING_SERVICE_CLOSED")
 	}
-	codingID := s.active[repositoryKey]
-	if codingID == "" {
+	workspaceKey, codingID, lookupErr := s.lookupActiveLocked(identity.Repository, input.TargetRef)
+	if lookupErr != nil {
 		s.mu.Unlock()
-		return mcpserver.CodingCloseOutput{Repository: repositoryKey, State: "no_active_session"}, nil
+		if strings.TrimSpace(input.TargetRef) == "" && errors.Is(lookupErr, errCodingSessionNotActive) {
+			return mcpserver.CodingCloseOutput{Repository: identity.Repository, State: "no_active_session"}, nil
+		}
+		return mcpserver.CodingCloseOutput{}, lookupErr
 	}
 	if codingID == openingRepository {
-		opening := s.opening[repositoryKey]
+		opening := s.opening[workspaceKey]
 		if opening == nil {
-			delete(s.active, repositoryKey)
+			delete(s.active, workspaceKey)
 			s.mu.Unlock()
-			return mcpserver.CodingCloseOutput{Repository: repositoryKey, State: "no_active_session"}, nil
+			return mcpserver.CodingCloseOutput{Repository: identity.Repository, State: "no_active_session"}, nil
 		}
 		opening.cancel()
 		done := opening.done
 		s.mu.Unlock()
 		select {
 		case <-done:
-			return mcpserver.CodingCloseOutput{Repository: repositoryKey, State: "closed"}, nil
+			return mcpserver.CodingCloseOutput{Repository: identity.Repository, State: "closed"}, nil
 		case <-ctx.Done():
 			return mcpserver.CodingCloseOutput{}, fmt.Errorf("CODING_CLOSE_TIMEOUT: %w", ctx.Err())
 		}
@@ -491,14 +494,14 @@ func (s *Service) Close(ctx context.Context, input mcpserver.CodingCloseInput) (
 		stopErr = s.stopProcesses(ctx, record.path)
 	}
 	s.finalizeClose(codingID, record)
-	return mcpserver.CodingCloseOutput{Repository: repositoryKey, State: "closed"}, stopErr
+	return mcpserver.CodingCloseOutput{Repository: identity.Repository, State: "closed"}, stopErr
 }
 func (s *Service) finalizeClose(codingID string, record *record) {
 	s.mu.Lock()
 	if s.sessions[codingID] == record {
 		delete(s.sessions, codingID)
-		if s.active[record.repository] == codingID {
-			delete(s.active, record.repository)
+		if s.active[record.workspaceKey] == codingID {
+			delete(s.active, record.workspaceKey)
 		}
 	}
 	s.mu.Unlock()
@@ -565,7 +568,53 @@ func (s *Service) CloseAll(ctx context.Context) error {
 	return closeErr
 }
 
-func (s *Service) lookupRepository(repositoryURL string) (string, *record, error) {
+var errCodingSessionNotActive = errors.New("CODING_SESSION_NOT_ACTIVE")
+
+func (s *Service) lookupActiveLocked(repositoryName, targetRef string) (string, string, error) {
+	if strings.TrimSpace(targetRef) != "" {
+		identity, err := workspace.NewWorkspaceIdentity(repositoryName, targetRef)
+		if err != nil {
+			return "", "", err
+		}
+		key := workspace.WorkspaceKey(identity)
+		owner := s.active[key]
+		if owner == "" {
+			return "", "", fmt.Errorf("%w: repository=%s target_ref=%s", errCodingSessionNotActive, repositoryName, identity.TargetRef)
+		}
+		return key, owner, nil
+	}
+	return s.lookupUniqueRepositoryLocked(repositoryName)
+}
+
+func (s *Service) lookupUniqueRepositoryLocked(repositoryName string) (string, string, error) {
+	var matchedKey, matchedOwner string
+	for key, owner := range s.active {
+		if owner == "" {
+			continue
+		}
+		if owner == openingRepository {
+			opening := s.opening[key]
+			if opening == nil || opening.identity.Repository != repositoryName {
+				continue
+			}
+		} else {
+			record := s.sessions[owner]
+			if record == nil || record.repository != repositoryName {
+				continue
+			}
+		}
+		if matchedOwner != "" {
+			return "", "", fmt.Errorf("CODING_SESSION_AMBIGUOUS: repository=%s active_branches>1", repositoryName)
+		}
+		matchedKey, matchedOwner = key, owner
+	}
+	if matchedOwner == "" {
+		return "", "", errCodingSessionNotActive
+	}
+	return matchedKey, matchedOwner, nil
+}
+
+func (s *Service) lookupRepository(repositoryURL, targetRef string) (string, *record, error) {
 	if s == nil {
 		return "", nil, errors.New("CODING_SERVICE_UNAVAILABLE")
 	}
@@ -573,17 +622,16 @@ func (s *Service) lookupRepository(repositoryURL string) (string, *record, error
 	if err != nil {
 		return "", nil, err
 	}
-	repositoryKey := identity.Repository
 	s.mu.RLock()
 	closed := s.closed
-	codingID := s.active[repositoryKey]
+	_, codingID, lookupErr := s.lookupActiveLocked(identity.Repository, targetRef)
 	record := s.sessions[codingID]
 	s.mu.RUnlock()
 	if closed {
 		return "", nil, errors.New("CODING_SERVICE_CLOSED")
 	}
-	if codingID == "" {
-		return "", nil, errors.New("CODING_SESSION_NOT_ACTIVE")
+	if lookupErr != nil {
+		return "", nil, lookupErr
 	}
 	if codingID == openingRepository {
 		return "", nil, errors.New("CODING_SESSION_OPENING")

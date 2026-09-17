@@ -1,6 +1,6 @@
 # CWapi 2.0.5 GUI
 
-窗口固定为 430 × 625、frameless、不可拉伸；主内容区支持鼠标滚轮纵向滚动；标题栏 `×` 只隐藏主窗口到系统托盘，不终止 CWapi，真正退出由托盘菜单执行；single-instance 再次启动会唤醒已有窗口。主界面通过页签分为 Coding 与 Agent 两页，两个页面只显示并管理各自链路。
+窗口固定为 430 × 625、frameless、不可拉伸；主内容区支持鼠标滚轮纵向滚动；标题栏 `×` 只隐藏主窗口到系统托盘，不终止 CWapi，真正退出由托盘菜单执行；同权限级别下再次启动正常 CWapi 时，Wails single-instance lock 阻止第二实例正常运行，已有实例恢复/显示窗口并弹出“CWapi 已在运行” Warning MessageDialog。Windows 不同权限/提升级别之间的 callback 属于 Wails/Windows 已知边界，V1 不重做 IPC。主界面通过页签分为 Coding 与 Agent 两页，两个页面只显示并管理各自链路。
 
 ## 页面结构
 
@@ -37,7 +37,7 @@ SAFE/FULL、Coding network access 与 Remote Git Rewrite 都是运行时能力�
 
 ## Workspace maintenance
 
-独立 overlay 显示 canonical repository。delete/rebuild 需要二次确认，操作期间 Service 停止；它不是远程 MCP tool。
+现有 overlay 按 workspace 显示 `owner/repository` 与 branch，提供“打开文件夹”和“删除并重建”。前端只持有 repository、target_ref、branch，不保存或拼接本地 workspace path/hash；Open Folder 由后端解析并打开 `<workspace>/repo`。Delete/Rebuild 按 repository + canonical target_ref 精确定位并需要二次确认，继续使用全局 maintenance busy 策略；legacy repository-only workspace 只有 metadata 的 repository + target_ref 精确匹配时才可解析，不自动迁移，也不 fallback 到其它 branch。它不是远程 MCP tool。
 
 ## 隐私与可用性
 

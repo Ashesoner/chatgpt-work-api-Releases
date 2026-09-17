@@ -36,6 +36,7 @@ type CodingOpenOutput struct {
 
 type CodingExecInput struct {
 	RepositoryURL  string   `json:"repository_url" jsonschema:"Git repository URL used to locate the repository's active Coding session"`
+	TargetRef      string   `json:"target_ref,omitempty" jsonschema:"optional branch/ref used to select one branch-aware active Coding session"`
 	Action         string   `json:"action,omitempty" jsonschema:"run (default), start, status or stop; start creates a CWapi-managed persistent process"`
 	ProcessID      string   `json:"process_id,omitempty" jsonschema:"persistent process identifier required by status and stop"`
 	Command        string   `json:"command,omitempty" jsonschema:"executable name or forward-slash path for run/start; do not include shell quoting"`
@@ -57,6 +58,7 @@ type CodingExecOutput struct {
 
 type CodingStatusInput struct {
 	RepositoryURL string `json:"repository_url" jsonschema:"Git repository URL used to locate the repository's active Coding session"`
+	TargetRef     string `json:"target_ref,omitempty" jsonschema:"optional branch/ref used to select one branch-aware active Coding session"`
 }
 
 type CodingStatusOutput struct {
@@ -79,6 +81,7 @@ type CodingStatusOutput struct {
 
 type CodingCloseInput struct {
 	RepositoryURL string `json:"repository_url" jsonschema:"Git repository URL whose current active Coding session should be closed"`
+	TargetRef     string `json:"target_ref,omitempty" jsonschema:"optional branch/ref used to select one branch-aware active Coding session"`
 }
 
 type CodingCloseOutput struct {
@@ -112,9 +115,10 @@ func RegisterCoding(server *mcp.Server, service CodingService) error {
 	})
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        ToolCodingExec,
-		Description: "Run one exact foreground command or manage a CWapi-owned persistent process in the active workspace. action defaults to run; use start with exact command/argv, then status or stop with process_id. CWapi never starts a Codex thread/turn or uses a Codex account.",
+		Description: "Run one exact foreground command or manage a CWapi-owned persistent process in an active workspace. target_ref optionally selects one branch-aware active session; omit it only when the repository has a single active branch. action defaults to run; use start with exact command/argv, then status or stop with process_id. CWapi never starts a Codex thread/turn or uses a Codex account.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input CodingExecInput) (*mcp.CallToolResult, CodingExecOutput, error) {
 		input.RepositoryURL = strings.TrimSpace(input.RepositoryURL)
+		input.TargetRef = strings.TrimSpace(input.TargetRef)
 		input.Action = strings.ToLower(strings.TrimSpace(input.Action))
 		input.ProcessID = strings.TrimSpace(input.ProcessID)
 		input.Command = strings.TrimSpace(input.Command)
@@ -132,9 +136,10 @@ func RegisterCoding(server *mcp.Server, service CodingService) error {
 	})
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        ToolCodingStatus,
-		Description: "Return current local Git truth for repository_url's active durable workspace without fetching or invoking a Codex model. While busy, includes the active foreground action, executable, start time and elapsed seconds; argv is intentionally not exposed.",
+		Description: "Return current local Git truth for an active durable workspace without fetching or invoking a Codex model. target_ref optionally selects one branch-aware active session; omit it only when the repository has a single active branch. While busy, includes the active foreground action, executable, start time and elapsed seconds; argv is intentionally not exposed.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input CodingStatusInput) (*mcp.CallToolResult, CodingStatusOutput, error) {
 		input.RepositoryURL = strings.TrimSpace(input.RepositoryURL)
+		input.TargetRef = strings.TrimSpace(input.TargetRef)
 		if input.RepositoryURL == "" {
 			return nil, CodingStatusOutput{}, errors.New("CODING_REPOSITORY_REQUIRED")
 		}
@@ -143,9 +148,10 @@ func RegisterCoding(server *mcp.Server, service CodingService) error {
 	})
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        ToolCodingClose,
-		Description: "Close repository_url's current active Coding session handle without resetting, cleaning or deleting the durable workspace.",
+		Description: "Close one active Coding session handle without resetting, cleaning or deleting the durable workspace. target_ref optionally selects the branch-aware active session; omit it only when the repository has a single active branch.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input CodingCloseInput) (*mcp.CallToolResult, CodingCloseOutput, error) {
 		input.RepositoryURL = strings.TrimSpace(input.RepositoryURL)
+		input.TargetRef = strings.TrimSpace(input.TargetRef)
 		if input.RepositoryURL == "" {
 			return nil, CodingCloseOutput{}, errors.New("CODING_REPOSITORY_REQUIRED")
 		}

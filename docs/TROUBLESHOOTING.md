@@ -103,11 +103,11 @@ Create/use a valid Runtime API key for the intended Tunnel and save it through t
 
 **Likely cause**
 
-That canonical repository already has an active Coding session.
+That canonical repository + target ref already has an active Coding session.
 
 **What to check**
 
-Call `coding_status(repository_url)` and confirm that this is the repository/task you intend to continue.
+Call `coding_status(repository_url, target_ref)` and confirm that this is the repository/branch/task you intend to continue. If multiple branches are active and `target_ref` is omitted, expect `CODING_SESSION_AMBIGUOUS`.
 
 **How to fix**
 
@@ -117,7 +117,17 @@ If continuing the same compatible task, use:
 coding_open(..., resume=true)
 ```
 
-If the old task is genuinely finished, close it first with `coding_close`. Do not work around ownership by changing URL spelling.
+If the old branch task is genuinely finished, close it with `coding_close(repository_url, target_ref)`. Different branches may be active concurrently; do not work around same-branch ownership by changing URL spelling.
+
+## `CODING_SESSION_AMBIGUOUS`
+
+**Symptom**
+
+A repository-only `coding_exec`, `coding_status`, or `coding_close` fails because the same repository has multiple active branches.
+
+**How to fix**
+
+Repeat the call with the intended `target_ref`. CWapi never chooses the newest, oldest, or arbitrary branch. If the named target is not active, the result is `CODING_SESSION_NOT_ACTIVE`; it does not fall back to another branch.
 
 ## Codex runtime unavailable
 

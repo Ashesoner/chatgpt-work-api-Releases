@@ -49,7 +49,7 @@ CWapi-data/config/cwapi.json
 真正打开仓库以后才会出现：
 
 ```text
-CWapi-data/workspaces/<repository-hash>/repo
+CWapi-data/workspaces/<workspace-hash>/repo
 ```
 
 配置对应 Tunnel 后才会生成：
@@ -148,9 +148,9 @@ load_skill
 ```text
 coding_open(repository_url, target_ref="main")
         ↓
-coding_status(repository_url)
+coding_status(repository_url, target_ref="main")
         ↓
-必要时只读 coding_exec(...)
+必要时只读 coding_exec(repository_url, target_ref="main", ...)
 ```
 
 `target_ref` 是必填 branch。还可以传完整 40 位 `expected_commit`，要求 CWapi fetch 后解析出的 branch commit 必须正好等于这个 SHA。
@@ -159,9 +159,9 @@ coding_status(repository_url)
 
 ## 9. 新 ChatGPT 对话怎么继续旧 Coding 任务
 
-CWapi 不向 Web GPT 暴露随机 Coding session ID。Web GPT 始终用 canonical `repository_url` 定位仓库。
+CWapi 不向 Web GPT 暴露随机 Coding session ID。workspace/session identity 是 canonical repository + canonical target ref，同一仓库不同 branch 可以同时 active。
 
-如果同一 repository 已经有兼容的 active session/workspace，新对话调用：
+如果同一 repository + target ref 已经有兼容的 active session/workspace，新对话调用：
 
 ```text
 coding_open(repository_url, target_ref, expected_commit?, resume=true)
@@ -169,7 +169,17 @@ coding_open(repository_url, target_ref, expected_commit?, resume=true)
 
 CWapi 复用内部 active session，并返回 `resumed=true`，不会再准备第二份 workspace。
 
-如果 repository 还 active，却用 `resume=false` 再开，会返回 `CODING_WORKSPACE_BUSY`，而不是静默抢走原 workspace。
+如果同一 repository + target ref 还 active，却用 `resume=false` 再开，会返回 `CODING_WORKSPACE_BUSY`；同仓库其它 branch 可以独立 open。后续 exec/status/close 的 `target_ref` 仅为兼容而可选：只有一个 active branch 时可只传 repository；多个 active branch 时省略返回 `CODING_SESSION_AMBIGUOUS`；指定未 active branch 返回 `CODING_SESSION_NOT_ACTIVE`，不会 fallback。
+
+### 同仓库两个 branch 并行
+
+```text
+coding_open(repository_url=<repo>, target_ref="branch-a")
+coding_open(repository_url=<repo>, target_ref="branch-b")
+coding_exec(repository_url=<repo>, target_ref="branch-a", ...)
+coding_status(repository_url=<repo>, target_ref="branch-b")
+coding_close(repository_url=<repo>, target_ref="branch-a")
+```
 
 ## 10. 配置 Agent
 

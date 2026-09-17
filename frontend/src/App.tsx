@@ -7,6 +7,7 @@ import {
   ConfigureOpenAITunnel,
   ConnectionInfo,
   DeleteWorkspace,
+  OpenWorkspaceFolder,
   RegenerateAgentAPIKey,
   RuntimeSnapshot,
   SetAgentEnabled,
@@ -17,6 +18,7 @@ import {
 import { WindowHide } from "../wailsjs/runtime/runtime";
 
 type Page = "coding" | "agent";
+type WorkspaceEntry = { repository: string; target_ref: string; branch: string };
 type Snapshot = {
   state: string;
   mcp?: { state?: string; address?: string; error?: string };
@@ -25,7 +27,7 @@ type Snapshot = {
   codex_remote_git_rewrite?: boolean;
   codex?: { state?: string; executable?: string; last_error?: string };
   coding?: { state?: string; active?: number; repositories?: string[] };
-  workspaces?: { repository_count?: number; repositories?: string[]; invalid_entries?: number };
+  workspaces?: { repository_count?: number; repositories?: string[]; workspaces?: WorkspaceEntry[]; invalid_entries?: number };
   agent_enabled?: boolean;
   agent_provider?: { state?: string; address?: string; last_error?: string };
   agent?: { bridge_state?: string; pending?: number; claimed?: number; active?: number; completed?: number; revision?: number; idle_count?: number; last_state?: string; last_error?: string };
@@ -253,13 +255,17 @@ export default function App() {
     });
   }
 
-  function deleteWorkspace(repository: string) {
+  function deleteWorkspace(workspace: WorkspaceEntry) {
     askConfirmation({
       title: "删除持久化工作区？",
-      description: `将删除 ${repository} 的本地工作区。tracked、untracked 和 ignored 文件都会被移除；下一次 coding_open 会重新克隆。`,
+      description: `将删除 ${workspace.repository} / ${workspace.branch} 的本地工作区。tracked、untracked 和 ignored 文件都会被移除；下一次 coding_open 会重新克隆该分支。`,
       confirmLabel: "删除并重建",
-      onConfirm: async () => { await action(() => DeleteWorkspace(repository), `工作区已移除：${repository}`); },
+      onConfirm: async () => { await action(() => DeleteWorkspace(workspace.repository, workspace.target_ref), `工作区已移除：${workspace.repository} / ${workspace.branch}`); },
     });
+  }
+
+  async function openWorkspaceFolder(workspace: WorkspaceEntry) {
+    await action(() => OpenWorkspaceFolder(workspace.repository, workspace.target_ref), `已打开工作区：${workspace.repository} / ${workspace.branch}`);
   }
 
   function changeRemoteGitRewrite(allowed: boolean) {
@@ -278,7 +284,7 @@ export default function App() {
   const access = snapshot.codex_access_profile || "safe";
   const remoteGitRewrite = Boolean(snapshot.codex_remote_git_rewrite);
   const bridge = snapshot.agent?.bridge_state || "offline";
-  const workspaces = snapshot.workspaces?.repositories || [];
+  const workspaceEntries = snapshot.workspaces?.workspaces || [];
   const issue = actionError || refreshError || snapshotIssue(page, snapshot, page === "coding" ? codingTunnel : agentTunnel);
   return (
     <main className="shell">
@@ -303,7 +309,6 @@ export default function App() {
             tunnelID={codingTunnelID}
             tunnelKey={codingTunnelKey}
             working={working}
-            workspaces={workspaces}
             access={access}
             networkAccess={Boolean(snapshot.codex_network_access)}
             remoteGitRewrite={remoteGitRewrite}
@@ -343,9 +348,10 @@ export default function App() {
       {workspaceManagerOpen && (
         <WorkspaceManager
           snapshot={snapshot}
-          workspaces={workspaces}
+          workspaces={workspaceEntries}
           working={working}
           onClose={() => setWorkspaceManagerOpen(false)}
+          onOpen={openWorkspaceFolder}
           onDelete={deleteWorkspace}
         />
       )}
@@ -366,13 +372,12 @@ function PageTab({ page, activePage, label, detail, status, onSelect }: { page: 
   );
 }
 
-function CodingPage({ snapshot, tunnel, tunnelID, tunnelKey, working, workspaces, access, networkAccess, remoteGitRewrite, onTunnelIDChange, onTunnelKeyChange, onConfigureTunnel, onClearTunnel, onAccessChange, onNetworkAccessChange, onRemoteGitRewriteChange, onOpenWorkspaceManager }: {
+function CodingPage({ snapshot, tunnel, tunnelID, tunnelKey, working, access, networkAccess, remoteGitRewrite, onTunnelIDChange, onTunnelKeyChange, onConfigureTunnel, onClearTunnel, onAccessChange, onNetworkAccessChange, onRemoteGitRewriteChange, onOpenWorkspaceManager }: {
   snapshot: Snapshot;
   tunnel: TunnelInfo;
   tunnelID: string;
   tunnelKey: string;
   working: boolean;
-  workspaces: string[];
   access: string;
   networkAccess: boolean;
   remoteGitRewrite: boolean;
@@ -471,15 +476,24 @@ function TunnelPanel({ label, info, working, tunnelID, tunnelKey, onTunnelIDChan
   );
 }
 
-function WorkspaceManager({ snapshot, workspaces, working, onClose, onDelete }: { snapshot: Snapshot; workspaces: string[]; working: boolean; onClose: () => void; onDelete: (repository: string) => void }) {
+function WorkspaceManager({ snapshot, workspaces, working, onClose, onOpen, onDelete }: { snapshot: Snapshot; workspaces: WorkspaceEntry[]; working: boolean; onClose: () => void; onOpen: (workspace: WorkspaceEntry) => void | Promise<void>; onDelete: (workspace: WorkspaceEntry) => void }) {
+  const maintenanceBusy = (snapshot.coding?.active ?? 0) > 0;
   return (
     <div className="overlay" role="dialog" aria-modal="true" aria-label="工作区管理">
       <div className="manager">
         <div className="manager-head"><div><p className="eyebrow">CODING 维护</p><h2>持久化工作区</h2></div><button onClick={onClose} aria-label="关闭工作区管理">×</button></div>
-        <p className="manager-note">删除工作区会移除本地源码、未跟踪文件和构建缓存。下一次 coding_open 时会重新创建。</p>
+        <p className="manager-note">删除工作区会移除对应分支的本地源码、未跟踪文件和构建缓存。下一次 coding_open 时会重新创建该分支。</p>
         <div className="workspace-list">
           {workspaces.length === 0 && <div className="empty">暂无持久化工作区。</div>}
-          {workspaces.map((repo) => <div className="workspace-item" key={repo}><code>{repo}</code><button disabled={working || (snapshot.coding?.active ?? 0) > 0} onClick={() => onDelete(repo)}>删除并重建</button></div>)}
+          {workspaces.map((workspace) => (
+            <div className="workspace-item" key={`${workspace.repository}:${workspace.target_ref}`}>
+              <div className="workspace-copy"><code>{workspace.repository}</code><span>分支：{workspace.branch}</span></div>
+              <div className="workspace-actions">
+                <button className="workspace-open" disabled={working} onClick={() => void onOpen(workspace)}>打开文件夹</button>
+                <button className="workspace-delete" disabled={working || maintenanceBusy} onClick={() => onDelete(workspace)}>删除并重建</button>
+              </div>
+            </div>
+          ))}
         </div>
         {(snapshot.workspaces?.invalid_entries ?? 0) > 0 && <div className="warning">无效工作区元数据条目：{snapshot.workspaces?.invalid_entries}</div>}
       </div>

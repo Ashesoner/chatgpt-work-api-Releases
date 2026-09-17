@@ -3,8 +3,6 @@ package workspace
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -103,12 +101,16 @@ func (m *Manager) Prepare(ctx context.Context, input PrepareInput) (Result, erro
 	if err != nil {
 		return Result{}, err
 	}
+	workspaceIdentity, err := NewWorkspaceIdentity(identity.Repository, targetRef)
+	if err != nil {
+		return Result{}, err
+	}
 	expectedCommit := strings.ToLower(strings.TrimSpace(input.ExpectedCommit))
 	if expectedCommit != "" && !fullCommitPattern.MatchString(expectedCommit) {
 		return Result{}, errors.New("WORKSPACE_EXPECTED_COMMIT_INVALID")
 	}
 
-	container := filepath.Join(m.root, workspaceKey(identity.Repository))
+	container := filepath.Join(m.root, WorkspaceKey(workspaceIdentity))
 	repoPath := filepath.Join(container, "repo")
 	metadataPath := filepath.Join(container, "workspace.json")
 	exists, err := m.ensureContainer(container, repoPath)
@@ -285,18 +287,15 @@ func (m *Manager) checkoutTrackingBranch(ctx context.Context, repoPath, branch, 
 }
 
 func (m *Manager) canonicalTargetRef(ctx context.Context, raw string) (string, string, error) {
-	branch := strings.TrimSpace(raw)
-	if strings.HasPrefix(branch, "refs/heads/") {
-		branch = strings.TrimPrefix(branch, "refs/heads/")
-	}
-	if branch == "" {
-		return "", "", errors.New("WORKSPACE_TARGET_REF_REQUIRED")
+	targetRef, branch, err := CanonicalTargetRef(raw)
+	if err != nil {
+		return "", "", err
 	}
 	output, err := m.mustGit(ctx, "check-ref-format", "--branch", branch)
 	if err != nil || strings.TrimSpace(output) == "" {
 		return "", "", errors.New("WORKSPACE_TARGET_REF_INVALID")
 	}
-	return "refs/heads/" + branch, branch, nil
+	return targetRef, branch, nil
 }
 
 func (m *Manager) ensureContainer(container, repoPath string) (bool, error) {
@@ -471,11 +470,6 @@ func resolveGitExecutable(value string) (string, error) {
 		return "", errors.New("WORKSPACE_GIT_NOT_FOUND")
 	}
 	return resolved, nil
-}
-
-func workspaceKey(repositoryName string) string {
-	sum := sha256.Sum256([]byte(strings.ToLower(repositoryName)))
-	return hex.EncodeToString(sum[:])
 }
 
 func loadMetadataIfPresent(path string) (*metadata, error) {

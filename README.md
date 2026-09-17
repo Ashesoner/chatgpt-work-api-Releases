@@ -100,7 +100,7 @@ The two lines are not configuration-compatible. Read the [Version Guide](docs/VE
 
 - Open or resume a GitHub repository by URL and branch ref.
 - Optional full-commit `expected_commit` baseline guard.
-- Durable workspace under `CWapi-data/workspaces/<repository-hash>/repo`.
+- Durable workspace under `CWapi-data/workspaces/<workspace-hash>/repo`.
 - Read and search source through exact commands.
 - Modify project files in the managed workspace.
 - Run compilers, test runners, scripts, local servers, and Git commands.
@@ -108,7 +108,8 @@ The two lines are not configuration-compatible. Read the [Version Guide](docs/VE
 - Create bounded `refs/cwapi/safety/*` recovery refs before direct local Git operations likely to discard content.
 - Use `coding_exec` foreground mode by default or the `start/status/stop` persistent-process lifecycle when needed.
 - Inspect HEAD, tracking HEAD, dirty state, and divergence with `coding_status`; while a foreground command is genuinely busy, status also reports its action, executable, start time, and elapsed seconds without echoing argv.
-- Resume the same active repository from a new ChatGPT conversation with compatible `coding_open(..., resume=true)`.
+- Run different branches of the same repository concurrently with branch-aware workspaces; resume the same repository + branch from a new ChatGPT conversation with compatible `coding_open(..., resume=true)`.
+- `coding_exec` / `coding_status` / `coding_close` accept optional `target_ref`: repository-only calls stay compatible with one active branch, multiple active branches require a target and otherwise return `CODING_SESSION_AMBIGUOUS`; an inactive named target returns `CODING_SESSION_NOT_ACTIVE` without fallback.
 - Load startup-cached shared task Skills on demand with `load_skill(name)`; Core/Rules/Skill changes take effect after restarting CWapi.
 - Keep source and other inspectable text in the command path; Coding exposes no file or image transfer tool.
 
@@ -149,11 +150,11 @@ Network access is independent from SAFE/FULL and defaults off. **Remote Git Rewr
 
 ## Durable workspaces
 
-Closing a Coding session does **not** delete its workspace. The workspace lives beside the portable installation under `CWapi-data` and can be resumed later.
+Closing a Coding session does **not** delete its workspace. Workspace identity is repository + canonical target ref, so different branches of one repository can persist independently under `CWapi-data` and be resumed later. The Desktop workspace manager shows repository + branch, can open the resolved `repo` folder, and can delete/rebuild one branch without targeting another.
 
 A new non-resume open refuses tracked dirty state, local commits, or divergence rather than silently overwriting them. `resume=true` explicitly continues a compatible existing workspace/session.
 
-If you move the **entire** extracted CWapi directory, its adjacent `CWapi-data` moves with it. If you move only the clean program/runtime files, the new location gets a fresh data root.
+For an original 2.0.5 -> branch-aware V1 upgrade, exit CWapi and back up the complete `CWapi-data` first; legacy repository-only workspaces are kept in place and are not auto-migrated. Keep the original 2.0.5 build for rollback; if rollback is required, exit V1 and restore the pre-upgrade data backup before starting 2.0.5. Workspace hash names remain long in V1; path shortening is a lower-priority post-V1 item.
 
 ## Files and images
 

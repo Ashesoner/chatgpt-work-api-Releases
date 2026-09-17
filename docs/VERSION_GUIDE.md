@@ -23,7 +23,7 @@ For a new installation, **2.x is the recommended line** unless you specifically 
 | Coding transport | Direct Coding MCP tool surface | GitHub + Slack workflow |
 | Local provider | Yes: localhost OpenAI-compatible `/v1` Agent Provider | Not part of the 1.6.3 workflow described by that release line |
 | Slack | Not required | Required by the legacy workflow |
-| Durable workspace | Yes, under `CWapi-data/workspaces/<repository-hash>/repo` | 1.6.x has its own persistence/workspace model; do not treat it as 2.0-compatible storage |
+| Durable workspace | Yes, under `CWapi-data/workspaces/<workspace-hash>/repo` | 1.6.x has its own persistence/workspace model; do not treat it as 2.0-compatible storage |
 | GitHub role | Repository source/remote used by Coding; private auth uses the Windows user's Git credentials | Core part of the legacy GitHub + Slack development workflow |
 | Coding agent reasoning | Web GPT only; bundled Codex is model-free command/exec toolhost | Follow the 1.6.3 documentation for that line's workflow |
 | OpenAI-compatible Agent bridge | Yes | No equivalent 2.0 Agent Provider contract in 1.6.3 |
