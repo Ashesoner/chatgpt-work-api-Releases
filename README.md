@@ -154,7 +154,7 @@ Closing a Coding session does **not** delete its workspace. Workspace identity i
 
 A new non-resume open refuses tracked dirty state, local commits, or divergence rather than silently overwriting them. `resume=true` explicitly continues a compatible existing workspace/session.
 
-For an original 2.0.5 -> branch-aware V1 upgrade, exit CWapi and back up the complete `CWapi-data` first; legacy repository-only workspaces are kept in place and are not auto-migrated. Keep the original 2.0.5 build for rollback; if rollback is required, exit V1 and restore the pre-upgrade data backup before starting 2.0.5. Workspace hash names remain long in V1; path shortening is a lower-priority post-V1 item.
+For an original 2.0.5 -> branch-aware V1 upgrade, exit CWapi and back up the complete `CWapi-data` first. New workspaces/runtime caches use shorter stable directory IDs; original V1 64-hex and upstream repository-only workspace directories remain in place and are reused only on exact metadata match, with no automatic migration. Keep the original 2.0.5 build for rollback; if rollback is required, exit V1 and restore the pre-upgrade data backup before starting 2.0.5.
 
 ## Files and images
 

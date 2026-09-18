@@ -42,22 +42,30 @@ func DeleteAt(dataRoot, repositoryName, targetRef string) error {
 	if err != nil {
 		return err
 	}
+	legacyRuntimeRoot, err := security.LegacyWorkspaceRuntimeRoot(dataRoot, resolved.repoPath)
+	if err != nil {
+		return err
+	}
 	runtimeBase := filepath.Join(dataRoot, "runtime", "workspaces")
-	if !security.PathWithin(runtimeRoot, runtimeBase) {
-		return errors.New("WORKSPACE_RUNTIME_PATH_INVALID")
+	for _, root := range []string{runtimeRoot, legacyRuntimeRoot} {
+		if !security.PathWithin(root, runtimeBase) {
+			return errors.New("WORKSPACE_RUNTIME_PATH_INVALID")
+		}
 	}
 	if err := os.RemoveAll(resolved.container); err != nil {
 		return errors.New("WORKSPACE_DELETE_FAILED")
 	}
-	if runtimeInfo, runtimeErr := os.Lstat(runtimeRoot); runtimeErr == nil {
-		if runtimeInfo.Mode()&os.ModeSymlink != 0 || !runtimeInfo.IsDir() {
-			return errors.New("WORKSPACE_RUNTIME_PATH_INVALID")
-		}
-		if err := os.RemoveAll(runtimeRoot); err != nil {
+	for _, root := range []string{runtimeRoot, legacyRuntimeRoot} {
+		if runtimeInfo, runtimeErr := os.Lstat(root); runtimeErr == nil {
+			if runtimeInfo.Mode()&os.ModeSymlink != 0 || !runtimeInfo.IsDir() {
+				return errors.New("WORKSPACE_RUNTIME_PATH_INVALID")
+			}
+			if err := os.RemoveAll(root); err != nil {
+				return errors.New("WORKSPACE_RUNTIME_DELETE_FAILED")
+			}
+		} else if !errors.Is(runtimeErr, os.ErrNotExist) {
 			return errors.New("WORKSPACE_RUNTIME_DELETE_FAILED")
 		}
-	} else if !errors.Is(runtimeErr, os.ErrNotExist) {
-		return errors.New("WORKSPACE_RUNTIME_DELETE_FAILED")
 	}
 	return nil
 }
@@ -77,11 +85,18 @@ func resolveWorkspaceAt(dataRoot, repositoryName, targetRef string) (resolvedWor
 		return resolvedWorkspace{}, err
 	}
 	root := filepath.Join(filepath.Clean(dataRoot), "workspaces")
-	primary := filepath.Join(root, WorkspaceKey(identity))
+	primary := filepath.Join(root, WorkspaceDirectoryKey(identity))
 	if exists, err := workspaceContainerExists(primary); err != nil {
 		return resolvedWorkspace{}, err
 	} else if exists {
 		return validateResolvedContainer(primary, identity)
+	}
+
+	previousV1 := filepath.Join(root, legacyBranchAwareWorkspaceKey(identity))
+	if exists, err := workspaceContainerExists(previousV1); err != nil {
+		return resolvedWorkspace{}, err
+	} else if exists {
+		return validateResolvedContainer(previousV1, identity)
 	}
 
 	legacy := filepath.Join(root, legacyWorkspaceKey(identity.Repository))
@@ -92,8 +107,9 @@ func resolveWorkspaceAt(dataRoot, repositoryName, targetRef string) (resolvedWor
 	}
 	resolved, err := validateResolvedContainer(legacy, identity)
 	if err != nil {
-		// Legacy fallback is intentionally indistinguishable from not-found when
-		// its metadata names another branch. Never fall through to another target.
+		// Repository-only fallback is intentionally indistinguishable from
+		// not-found when its metadata names another branch. Never fall through
+		// to a different target.
 		if errors.Is(err, errWorkspaceIdentityMismatch) {
 			return resolvedWorkspace{}, errors.New("WORKSPACE_NOT_FOUND")
 		}

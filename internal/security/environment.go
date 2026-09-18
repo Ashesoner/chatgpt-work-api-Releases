@@ -68,16 +68,63 @@ func PrepareCommandRuntime(dataRoot, workspaceRoot, processID, profileValue stri
 	return runtime, nil
 }
 
+const workspaceRuntimeKeyHexLength = 24
+
 func WorkspaceRuntimeRoot(dataRoot, workspaceRoot string) (string, error) {
+	canonical, base, err := canonicalWorkspaceRuntimeBase(dataRoot, workspaceRoot)
+	if err != nil {
+		return "", err
+	}
+	root := filepath.Join(base, workspaceRuntimeKey(canonical))
+	if _, err := validRuntimeDirectory(root); err != nil {
+		return "", err
+	}
+	return root, nil
+}
+
+// LegacyWorkspaceRuntimeRoot returns the pre-shortening 64-hex runtime path.
+// It is used only for cleanup/diagnostics; new commands must use WorkspaceRuntimeRoot.
+func LegacyWorkspaceRuntimeRoot(dataRoot, workspaceRoot string) (string, error) {
+	canonical, base, err := canonicalWorkspaceRuntimeBase(dataRoot, workspaceRoot)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(base, legacyWorkspaceRuntimeKey(canonical)), nil
+}
+
+func canonicalWorkspaceRuntimeBase(dataRoot, workspaceRoot string) (string, string, error) {
 	if !filepath.IsAbs(dataRoot) || !filepath.IsAbs(workspaceRoot) {
-		return "", errors.New("SECURITY_WORKSPACE_RUNTIME_INPUT_INVALID")
+		return "", "", errors.New("SECURITY_WORKSPACE_RUNTIME_INPUT_INVALID")
 	}
 	canonical, err := CanonicalPath(workspaceRoot, workspaceRoot)
 	if err != nil {
-		return "", fmt.Errorf("SECURITY_WORKSPACE_RESOLVE_FAILED: %w", err)
+		return "", "", fmt.Errorf("SECURITY_WORKSPACE_RESOLVE_FAILED: %w", err)
 	}
+	return canonical, filepath.Join(filepath.Clean(dataRoot), "runtime", "workspaces"), nil
+}
+
+func workspaceRuntimeKey(canonical string) string {
+	encoded := legacyWorkspaceRuntimeKey(canonical)
+	return encoded[:workspaceRuntimeKeyHexLength]
+}
+
+func legacyWorkspaceRuntimeKey(canonical string) string {
 	sum := sha256.Sum256([]byte(strings.ToLower(filepath.Clean(canonical))))
-	return filepath.Join(filepath.Clean(dataRoot), "runtime", "workspaces", hex.EncodeToString(sum[:])), nil
+	return hex.EncodeToString(sum[:])
+}
+
+func validRuntimeDirectory(path string) (bool, error) {
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return false, errors.New("SECURITY_WORKSPACE_RUNTIME_ROOT_INVALID")
+	}
+	return true, nil
 }
 
 func (r *CommandRuntime) Environment(entries []string, sandbox string) ([]string, error) {

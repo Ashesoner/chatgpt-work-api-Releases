@@ -153,7 +153,7 @@ Cline、Roo Code 等允许自定义 OpenAI-compatible provider 的客户端**可
 
 新的 non-resume open 遇到 tracked dirty、local commits 或 divergence 会拒绝，而不是偷偷覆盖。`resume=true` 才表示显式继续兼容的现有 workspace/session。
 
-从原版 2.0.5 升级 branch-aware V1 前，应先退出 CWapi 并完整备份 `CWapi-data`；legacy repository-only workspace 保留原地且不会自动迁移。保留原版 2.0.5 作为 rollback；需要回退时先退出 V1，恢复升级前 data 备份，再启动原版。V1 仍使用较长 workspace hash 名称，路径缩短属于 V1 后低优先级事项。
+从原版 2.0.5 升级 branch-aware V1 前，应先退出 CWapi 并完整备份 `CWapi-data`。新 workspace/runtime cache 使用更短的稳定目录 ID；原 V1 64 位 branch-aware 与上游 repository-only workspace 都保留原地，只有 metadata 精确匹配时才复用，不自动迁移。保留原版 2.0.5 作为 rollback；需要回退时先退出 V1，恢复升级前 data 备份，再启动原版。
 
 ## 文件与图片
 

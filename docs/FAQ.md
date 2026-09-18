@@ -144,11 +144,11 @@ If you move the **entire extracted directory**, including `CWapi-data`, the exis
 
 If you copy only a clean `CWapi.exe`/`runtime` set into another directory, that directory creates a new `CWapi-data`, so the old workspace can appear to have "disappeared" even though it is still in the old directory.
 
-For an original 2.0.5 -> branch-aware V1 upgrade, close active sessions, exit CWapi, back up the complete `CWapi-data`, and keep the original 2.0.5 build. Legacy repository-only workspaces are not auto-migrated. To roll back, exit V1, restore the pre-upgrade data backup beside the original build, then start 2.0.5. The long workspace-hash path remains unchanged in V1 and is a lower-priority post-V1 item.
+For an original 2.0.5 -> branch-aware V1 upgrade, close active sessions, exit CWapi, back up the complete `CWapi-data`, and keep the original 2.0.5 build. New durable/runtime workspace paths use shorter IDs; original V1 64-hex and upstream repository-only workspace directories are not auto-migrated and are reused only when metadata exactly matches. To roll back, exit V1, restore the pre-upgrade data backup beside the original build, then start 2.0.5.
 
 ## How do I manage branch workspaces in the GUI?
 
-Open **Manage Workspaces** on the Coding page. Each item shows repository + branch and provides **Open Folder** and branch-scoped **Delete and Rebuild**. Paths/hashes are resolved only by the backend. Legacy workspaces are not auto-migrated.
+Open **Manage Workspaces** on the Coding page. Each item shows repository + branch and provides **Open Folder** and branch-scoped **Delete and Rebuild**. Paths/hashes are resolved only by the backend. Original V1 64-hex and upstream repository-only workspaces are not auto-migrated.
 
 ## What happens if I start CWapi twice?
 

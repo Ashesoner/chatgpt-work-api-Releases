@@ -216,22 +216,31 @@ Procedure:
 5. verify existing configuration/tunnel behavior;
 6. open a known repository branch;
 7. verify branch-aware workspace creation;
-8. confirm old repository-only workspace directories are not automatically renamed or deleted;
+8. confirm original V1 64-hex and upstream repository-only workspace directories are not automatically renamed or deleted;
 9. verify rollback by exiting modified build and reopening original CWapi with preserved original data if needed.
 
-## 7. Path-length follow-up
+## 7. Path-length regression
 
-Workspace hash directory names are currently long. V1 does not change them.
+Windows testing of a pre-shortening build reproduced a concrete failure inside the SAFE runtime cache:
 
-During all stages, record any command failure that appears related to full path length. If such a failure occurs, stop and document:
+```text
+CWapi-data/runtime/workspaces/<64-hex>/cache/go-mod/cache/vcs/<64-hex>/hooks/
+-> Filename too long
+```
 
-- full failing path;
-- command/tool that failed;
-- Windows error/message;
-- whether long-path support is enabled;
-- whether failure disappears with a shorter temporary root.
+V1 therefore shortens new durable workspace directory IDs and runtime workspace/cache IDs to 24 hex characters while keeping logical Coding ownership on the full repository + target-ref identity. Original V1 64-hex branch-aware workspaces and upstream repository-only 64-hex workspaces remain compatible without automatic rename/migration. Existing 64-hex runtime cache directories may remain on disk, but new commands must use the short runtime root.
 
-Only then consider a separate post-V1 workspace-path shortening design.
+Source/unit coverage must verify:
+
+- same identity -> same short ID;
+- same repository + different branches -> different short IDs;
+- metadata mismatch -> reject;
+- original V1 64-hex branch-aware directory -> recognized;
+- upstream repository-only 64-hex directory -> recognized only on exact metadata match;
+- existing 64-hex runtime cache -> not selected for new commands; short runtime root is used instead, and Delete/Rebuild cleans both short and old runtime roots;
+- new SAFE cache environment points at the short runtime root.
+
+Runtime EXE regression is verified on the running 2026-09-18 01:25 V1 build: SAFE exposes a 24-hex runtime workspace ID and `go test ./...` passes without cache overrides. New durable short-key directory creation remains covered by source/unit tests rather than a separate live-branch creation test.
 
 ## 8. Acceptance criteria
 
@@ -240,7 +249,8 @@ V1 is accepted only if all are true:
 ```text
 [ ] Same repository + different branches can work concurrently.
 [ ] Same repository + same branch keeps existing BUSY/resume behavior.
-[ ] Workspace paths are branch-specific.
+[ ] Workspace paths are branch-specific and new durable/runtime workspace IDs are short.
+[ ] Original V1 64-hex and upstream repository-only legacy directories remain compatible without automatic migration.
 [ ] Close/cleanup does not leave stale BUSY entries.
 [ ] GUI lists repository + branch separately.
 [ ] Open Folder targets the correct workspace.
@@ -260,7 +270,7 @@ Fill this section during implementation.
 - Notes:
   - Go 1.25.0 Windows amd64 is installed. The already-running CWapi process has the pre-install PATH, so tests were invoked through `C:/Program Files/Go/bin/go.exe`.
   - Branch-aware `WorkspaceIdentity` / `WorkspaceKey` implementation and unit tests are present.
-  - `go test ./...` passes.
+  - `go test ./...` passes on the running 2026-09-18 01:25 V1 build without test-only `GOMODCACHE` / `GOCACHE` overrides. Direct environment inspection shows SAFE uses a 24-hex runtime workspace ID, and the previously observed deep-cache `Filename too long` failure does not reproduce.
   - `git diff --check` passes.
 
 ### Coding concurrency
@@ -272,7 +282,7 @@ Fill this section during implementation.
   - Exact target routing was verified independently for branch-a and branch-b. Closing branch-a leaves branch-b active.
   - Repository-only calls remain compatible when exactly one branch is active and return `CODING_SESSION_AMBIGUOUS` when multiple branches are active.
   - A non-active `target_ref` returns `CODING_SESSION_NOT_ACTIVE` and does not fall back to another branch.
-  - Durable workspace paths remain keyed by repository + canonical target ref and do not reuse the legacy repository-only key.
+  - Coding ownership remains keyed by the full repository + canonical target-ref identity; only on-disk directory IDs are shortened.
 
 ### Build/GUI
 
@@ -281,7 +291,7 @@ Fill this section during implementation.
   - Workspace Index now preserves the repository summary fields and adds `Workspaces[]` entries containing only `repository`, `target_ref`, and `branch`.
   - Unit tests cover same-repository multi-branch listing, legacy index compatibility, invalid metadata exclusion, branch-scoped deletion, missing-target no-fallback behavior, exact legacy metadata matching, and backend repo-path resolution.
   - `DeleteWorkspace(repository,targetRef)` preserves the existing global Coding/Agent maintenance-busy policy.
-  - `OpenWorkspaceFolder(repository,targetRef)` resolves the physical workspace on the backend and opens `<workspace>/repo`; the frontend never receives or constructs workspace paths/hashes.
+  - `OpenWorkspaceFolder(repository,targetRef)` resolves the physical workspace on the backend and launches `explorer.exe` with standard visible `os/exec`; the frontend never receives or constructs workspace paths/hashes. The running 2026-09-18 01:25 V1 build was user-verified to open the workspace folder visibly from the GUI.
   - The existing workspace-management overlay now shows repository + branch and provides Open Folder / Delete and Rebuild actions. No second window/program was added.
   - `go test ./...` passes.
   - Frontend production build passes (`npm ci --ignore-scripts` followed by `npm run build`). `--ignore-scripts` was needed because the running CWapi SAFE sandbox blocks npm install lifecycle child-process spawning; this did not change dependency versions or tracked package metadata.
@@ -307,7 +317,7 @@ Fill this section during implementation.
   - README, protocol, architecture/workflow, Coding Guide, Getting Started, FAQ, Troubleshooting, Operations, GUI, migration/version path examples, and the branch-workspace documents were audited for repository-only assumptions.
   - Public docs now describe repository + canonical target ref workspace identity, optional target selectors on exec/status/close, single-branch compatibility, multi-branch ambiguity, explicit-target not-active behavior, and no cross-branch fallback.
   - English and Chinese user guides include same-repository branch-a/branch-b examples with target-aware follow-up calls.
-  - GUI Open Folder / branch-scoped Delete-Rebuild, exact legacy metadata fallback, no automatic legacy migration, 2.0.5 upgrade/rollback, single-instance conflict isolation, V1-primary WarningDialog behavior, the old-primary cross-version warning limitation, the mixed-privilege Wails/Windows boundary, and post-V1 path-length follow-up are documented.
+  - GUI Open Folder / branch-scoped Delete-Rebuild, exact legacy metadata fallback, no automatic legacy migration, short durable/runtime path compatibility, 2.0.5 upgrade/rollback, single-instance conflict isolation, V1-primary WarningDialog behavior, the old-primary cross-version warning limitation, and the mixed-privilege Wails/Windows boundary are documented.
   - No new executable integration test was run in this stage.
   - `prompts/coding/core.md` was subsequently aligned in C.5 to the V1 branch-aware identity/routing contract; no public session ID was added.
 
@@ -334,6 +344,7 @@ Fill this section during implementation.
   - D0 observed exactly one CWapi process after the launch attempt and no additional MCP/service, Tunnel client, or listener set; the original listeners remained 32123/32124 and its two Tunnel-client listeners remained unchanged.
   - No `CWapi 已在运行` V1 WarningDialog was observed in this cross-version direction. This is acceptable under the chosen V1 target because the original 2.0.5 primary owns the Wails second-instance callback and does not contain the V1 warning implementation.
   - D1 must verify `V1 primary -> V1 second` separately: the V1 primary should handle the callback, restore/show its window, and display the documented WarningDialog.
+  - Runtime regression is verified on the running 2026-09-18 01:25 V1 build: GUI Open Folder visibly opens the workspace, SAFE exposes a 24-hex runtime workspace ID, and an unmodified `go test ./...` completes without the previously observed Windows `Filename too long` failure.
   - Formal V1 acceptance target: guarantee single-instance conflict isolation; provide the explicit WarningDialog when V1 is the already-running primary; do not require the V1 warning when an original 2.0.5 build owns the primary instance.
   - Do not interpret mixed-privilege callback behavior as a V1 IPC regression; it is outside the V1 design scope.
 
@@ -341,6 +352,6 @@ Fill this section during implementation.
 
 - Status: DOCUMENTED / EXECUTABLE VERIFICATION PENDING
 - Notes:
-  - The original 2.0.5 -> V1 procedure now explicitly requires exiting CWapi, backing up complete `CWapi-data`, retaining the original 2.0.5 build, and not auto-migrating legacy workspaces.
+  - The original 2.0.5 -> V1 procedure now explicitly requires exiting CWapi, backing up complete `CWapi-data`, retaining the original 2.0.5 build, and not auto-migrating original V1 64-hex or upstream repository-only workspaces.
   - Rollback is documented as exiting V1, restoring the pre-upgrade data backup when required, and launching the untouched original build.
   - Real executable upgrade/rollback verification remains intentionally unrun in this stage.

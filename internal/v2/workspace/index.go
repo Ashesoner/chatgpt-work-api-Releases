@@ -23,10 +23,10 @@ type IndexSnapshot struct {
 }
 
 // Index reads durable workspace metadata only. It never fetches or mutates Git.
-// Both V1 branch-aware and legacy repository-only containers are recognized,
-// but only when their metadata is valid and the directory key matches that
-// metadata. Duplicate legacy/V1 copies of the same identity collapse to one
-// public entry; maintenance resolution still prefers the V1 container.
+// Short-key V1, original 64-hex branch-aware V1, and legacy repository-only
+// containers are recognized, but only when metadata is valid and the directory
+// key matches that metadata. Duplicate copies of the same identity collapse to
+// one public entry; maintenance resolution prefers the newest short-key form.
 func (m *Manager) Index() IndexSnapshot {
 	if m == nil {
 		return IndexSnapshot{}
@@ -52,7 +52,9 @@ func (m *Manager) Index() IndexSnapshot {
 			invalid++
 			continue
 		}
-		if entry.Name() != WorkspaceKey(identity) && entry.Name() != legacyWorkspaceKey(identity.Repository) {
+		if entry.Name() != WorkspaceDirectoryKey(identity) &&
+			entry.Name() != legacyBranchAwareWorkspaceKey(identity) &&
+			entry.Name() != legacyWorkspaceKey(identity.Repository) {
 			invalid++
 			continue
 		}

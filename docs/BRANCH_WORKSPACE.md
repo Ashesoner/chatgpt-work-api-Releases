@@ -84,26 +84,26 @@ target_ref
 branch
 ```
 
-Local workspace paths and hash/container names are intentionally not exposed to the frontend. The GUI sends only repository + target ref back to the backend, so a future workspace-key/path-length change does not require frontend path logic.
+Local workspace paths and hash/container names are intentionally not exposed to the frontend. The GUI sends only repository + target ref back to the backend, so the V1 path-shortening change requires no frontend path construction.
 
-Open Folder and Delete/Rebuild resolve the physical workspace on the backend. Resolution first checks the exact branch-aware `WorkspaceKey(repository,target_ref)`. A legacy repository-only container is considered only when the branch-aware container does not exist, and legacy metadata must match both `repository` and canonical `target_ref` exactly. A repository match alone is never sufficient and no request falls back to another branch.
+Open Folder and Delete/Rebuild resolve the physical workspace on the backend. Resolution order is: the new short branch-aware directory key, the original V1 64-hex branch-aware key, then the upstream 2.0.5 repository-only 64-hex key. Every reusable container must have `workspace.json` metadata matching both `repository` and canonical `target_ref` exactly; a repository match alone is never sufficient and no request falls back to another branch.
 
 V1 intentionally keeps the existing conservative maintenance lock: destructive workspace maintenance remains blocked while Coding activity is present. Branch-scoped maintenance locking can be considered later. Open Folder is non-destructive but is serialized with desktop maintenance so it cannot race a delete operation.
 
 ## 5. Old workspace compatibility
 
-V1 does not automatically rename or migrate old repository-only workspace directories.
+V1 does not automatically rename or migrate either original V1 64-hex branch-aware directories or upstream 2.0.5 repository-only workspace directories.
 
-Reason: an old workspace may contain uncommitted work, local commits, runtime state, or metadata. Automatic migration adds risk to an otherwise small change.
+Reason: an old workspace may contain uncommitted work, local commits, runtime state, or metadata. Automatic migration adds risk; compatibility is implemented by exact metadata-validated reuse instead.
 
 Upgrade behavior:
 
 1. back up the existing `CWapi-data` directory before switching versions;
 2. keep the old CWapi installation available for rollback;
 3. start the modified build only after the original CWapi process has exited;
-4. first open of a branch under V1 creates/uses the branch-aware workspace format;
-5. old workspace directories are left untouched until the user intentionally cleans them up;
-6. legacy workspaces remain manageable only when their `workspace.json` repository and target ref exactly identify the requested branch.
+4. new branches use the short branch-aware workspace directory format;
+5. existing original-V1 64-hex or upstream repository-only directories are reused in place only when metadata exactly identifies the requested repository + target ref;
+6. old directories are never renamed or migrated automatically and remain manageable through the same backend resolver.
 
 ## 6. Original CWapi and modified CWapi conflict prevention
 
@@ -204,6 +204,7 @@ First modified-build run:
 [ ] Verify the workspace management GUI entries and Open Folder action.
 ```
 
+
 Rollback:
 
 1. exit the modified CWapi;
@@ -224,17 +225,21 @@ When branch-aware behavior fails, check in this order:
 7. session close/cleanup removing the correct key;
 8. GUI entry referring to the same identity used by backend maintenance.
 
-## 11. Low-priority follow-up: Windows path length
+## 11. Windows path-length mitigation
 
-Workspace directories currently use long hash names similar to:
+Windows testing of a pre-shortening build reproduced `Filename too long` during a SAFE Go module download under `CWapi-data/runtime/workspaces/<64-hex>/cache/go-mod/...`. That established a concrete long-path risk for the 64-hex runtime layout; the durable workspace directory also contributed unnecessary depth.
 
-```text
-6f348d1271dee80644fb004738e81958af340a0991708d4612f3c0a98279d88f
-```
+The V1 fix separates logical identity from on-disk naming:
 
-Combined with deep repository paths, this may eventually cause Windows/tool path-length problems for some commands.
+- Coding active/opening/close ownership keeps the full repository + target-ref identity key;
+- new durable workspace directories use a stable 24-hex (96-bit) prefix derived from the full branch-aware SHA-256 digest;
+- new SAFE runtime workspace/cache directories use the same 24-hex length policy;
+- original V1 64-hex branch-aware workspaces and upstream 2.0.5 repository-only 64-hex workspaces remain usable in place;
+- existing 64-hex runtime cache directories are left in place but are not reused for new commands; new SAFE commands always use the short runtime root, and Delete/Rebuild cleans both short and legacy runtime roots;
+- no workspace or runtime directory is automatically renamed or migrated;
+- `workspace.json` remains authoritative for repository + target-ref identity, and metadata mismatch is rejected.
 
-This is explicitly **not part of V1**. It should be revisited only after V1 is complete, or earlier if testing proves that path length causes a real failure. Any future change must preserve stable workspace identity and backward compatibility.
+Unit tests cover short-key stability, branch separation, metadata mismatch rejection, original-V1 64-hex compatibility, repository-only legacy compatibility, short runtime-cache selection, and cleanup of both short and legacy runtime roots. Runtime integration was then verified on the 2026-09-18 01:25 V1 build: SAFE injected a 24-hex runtime workspace ID and `go test ./...` passed without any test-only `GOMODCACHE`/`GOCACHE` override, so the previously observed deep-cache `Filename too long` failure did not reproduce.
 
 ## 12. Custom changes relative to upstream 2.0.5
 
@@ -247,8 +252,10 @@ Implemented V1 changes in this fork:
 5. branch display in the existing workspace management GUI;
 6. backend-resolved Open Folder action without exposing local workspace paths to the frontend;
 7. branch-scoped Delete and Rebuild with exact legacy metadata fallback;
-8. single-instance conflict isolation, with an explicit startup WarningDialog when a V1 build is the already-running primary;
-9. tests and upgrade/use documentation.
+8. visible Open Folder launching (Explorer is not routed through the hidden background-process helper);
+9. short durable/runtime workspace IDs with original 64-hex compatibility and no automatic migration;
+10. single-instance conflict isolation, with an explicit startup WarningDialog when a V1 build is the already-running primary;
+11. tests and upgrade/use documentation.
 
 
 ## 13. Release documentation status
@@ -260,10 +267,10 @@ Before final executable integration, the public Coding/workspace documentation i
 - repository-only follow-up calls remain compatible with exactly one active branch, return `CODING_SESSION_AMBIGUOUS` with multiple active branches, and an explicitly named inactive target returns `CODING_SESSION_NOT_ACTIVE` without fallback;
 - user examples show two branches of one repository active concurrently and carry the corresponding target ref through follow-up calls;
 - the existing GUI manages repository + branch entries with backend-resolved Open Folder and branch-scoped Delete/Rebuild;
-- legacy repository-only workspaces are not auto-migrated;
+- original V1 64-hex branch-aware and upstream repository-only workspaces are not auto-migrated; both are reused only when metadata exactly matches the requested identity;
 - the original 2.0.5 upgrade/rollback procedure requires a pre-upgrade `CWapi-data` backup and keeping the original build available;
 - same-privilege duplicate launches use Wails single-instance isolation; a V1 primary handles the callback and shows the explicit warning, while an original 2.0.5 primary may reject the V1 second process without showing the V1 warning; mixed Windows privilege levels remain a documented Wails/Windows boundary;
-- long workspace hash paths remain unchanged and are explicitly deferred to a lower-priority post-V1 design.
+- new durable and SAFE runtime workspace/cache directories use short stable IDs; old 64-hex durable workspace directories remain compatible in place without migration, while old 64-hex runtime caches are no longer selected for new commands. The running 2026-09-18 01:25 V1 build verified the SAFE runtime path uses 24 hex and the formerly failing Go test path now passes without overrides; new durable short-key creation is covered by source/unit tests.
 
 Runtime Coding prompt text under `prompts/` has now been reviewed separately and aligned to the same branch-aware routing contract.
 

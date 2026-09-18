@@ -110,7 +110,10 @@ func (m *Manager) Prepare(ctx context.Context, input PrepareInput) (Result, erro
 		return Result{}, errors.New("WORKSPACE_EXPECTED_COMMIT_INVALID")
 	}
 
-	container := filepath.Join(m.root, WorkspaceKey(workspaceIdentity))
+	container, err := m.prepareContainer(workspaceIdentity)
+	if err != nil {
+		return Result{}, err
+	}
 	repoPath := filepath.Join(container, "repo")
 	metadataPath := filepath.Join(container, "workspace.json")
 	exists, err := m.ensureContainer(container, repoPath)
@@ -296,6 +299,60 @@ func (m *Manager) canonicalTargetRef(ctx context.Context, raw string) (string, s
 		return "", "", errors.New("WORKSPACE_TARGET_REF_INVALID")
 	}
 	return targetRef, branch, nil
+}
+
+func (m *Manager) prepareContainer(identity WorkspaceIdentity) (string, error) {
+	primary := filepath.Join(m.root, WorkspaceDirectoryKey(identity))
+	if exists, err := workspaceContainerExists(primary); err != nil {
+		return "", err
+	} else if exists {
+		if err := validateContainerMetadataIfPresent(primary, identity); err != nil {
+			return "", err
+		}
+		return primary, nil
+	}
+
+	previousV1 := filepath.Join(m.root, legacyBranchAwareWorkspaceKey(identity))
+	if exists, err := workspaceContainerExists(previousV1); err != nil {
+		return "", err
+	} else if exists {
+		if _, err := validateResolvedContainer(previousV1, identity); err != nil {
+			return "", err
+		}
+		return previousV1, nil
+	}
+
+	legacy := filepath.Join(m.root, legacyWorkspaceKey(identity.Repository))
+	if exists, err := workspaceContainerExists(legacy); err != nil {
+		return "", err
+	} else if exists {
+		if _, err := validateResolvedContainer(legacy, identity); err == nil {
+			return legacy, nil
+		} else if !errors.Is(err, errWorkspaceIdentityMismatch) {
+			return "", err
+		}
+	}
+
+	return primary, nil
+}
+
+func validateContainerMetadataIfPresent(container string, identity WorkspaceIdentity) error {
+	meta, err := loadMetadataIfPresent(filepath.Join(container, "workspace.json"))
+	if errors.Is(err, errWorkspaceMetadataInvalid) {
+		// Preserve the existing crash-recovery behavior: non-resume preparation
+		// may repair malformed metadata after Git origin/dirty/local-commit checks.
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if meta == nil {
+		return nil
+	}
+	if meta.Repository != identity.Repository || meta.TargetRef != identity.TargetRef {
+		return errWorkspaceIdentityMismatch
+	}
+	return nil
 }
 
 func (m *Manager) ensureContainer(container, repoPath string) (bool, error) {

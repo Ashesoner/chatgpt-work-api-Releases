@@ -3,11 +3,11 @@ package main
 import (
 	"context"
 	"errors"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/AAAYNMMM/CWapi/internal/processlaunch"
 	v2service "github.com/AAAYNMMM/CWapi/internal/v2/service"
 	"github.com/AAAYNMMM/CWapi/internal/v2/workspace"
 )
@@ -77,12 +77,16 @@ func (a *App) OpenWorkspaceFolder(repositoryName, targetRef string) error {
 	if err != nil {
 		return err
 	}
-	command := processlaunch.Command("explorer.exe", repoPath)
+	command := workspaceFolderCommand(repoPath)
 	if err := command.Start(); err != nil {
 		return errors.New("WORKSPACE_OPEN_FOLDER_FAILED")
 	}
 	go func() { _ = command.Wait() }()
 	return nil
+}
+
+func workspaceFolderCommand(repoPath string) *exec.Cmd {
+	return exec.Command("explorer.exe", repoPath)
 }
 
 func workspaceDataRoot(configPath string) string {

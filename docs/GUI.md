@@ -37,7 +37,7 @@ SAFE/FULL、Coding network access 与 Remote Git Rewrite 都是运行时能力�
 
 ## Workspace maintenance
 
-现有 overlay 按 workspace 显示 `owner/repository` 与 branch，提供“打开文件夹”和“删除并重建”。前端只持有 repository、target_ref、branch，不保存或拼接本地 workspace path/hash；Open Folder 由后端解析并打开 `<workspace>/repo`。Delete/Rebuild 按 repository + canonical target_ref 精确定位并需要二次确认，继续使用全局 maintenance busy 策略；legacy repository-only workspace 只有 metadata 的 repository + target_ref 精确匹配时才可解析，不自动迁移，也不 fallback 到其它 branch。它不是远程 MCP tool。
+现有 overlay 按 workspace 显示 `owner/repository` 与 branch，提供“打开文件夹”和“删除并重建”。前端只持有 repository、target_ref、branch，不保存或拼接本地 workspace path/hash；Open Folder 由后端解析并打开 `<workspace>/repo`。Delete/Rebuild 按 repository + canonical target_ref 精确定位并需要二次确认，继续使用全局 maintenance busy 策略；原 V1 64 位 branch-aware 与上游 repository-only workspace 都只有 metadata 的 repository + target_ref 精确匹配时才可解析，不自动迁移，也不 fallback 到其它 branch。它不是远程 MCP tool。
 
 ## 隐私与可用性
 

@@ -24,8 +24,26 @@ func TestWorkspaceIdentityBranchAware(t *testing.T) {
 	if WorkspaceKey(a) == WorkspaceKey(c) {
 		t.Fatal("different branches must have different workspace keys")
 	}
-	if WorkspaceKey(a) == legacyWorkspaceKey(a.Repository) {
-		t.Fatal("V1 key must not reuse repository-only workspace key")
+	if len(WorkspaceKey(a)) != 64 {
+		t.Fatalf("runtime workspace key length=%d want 64", len(WorkspaceKey(a)))
+	}
+	if WorkspaceDirectoryKey(a) != WorkspaceDirectoryKey(b) {
+		t.Fatal("same repository + branch must have stable directory key")
+	}
+	if WorkspaceDirectoryKey(a) == WorkspaceDirectoryKey(c) {
+		t.Fatal("different branches must have different directory keys")
+	}
+	if len(WorkspaceDirectoryKey(a)) != workspaceKeyHexLength || workspaceKeyHexLength != 24 {
+		t.Fatalf("short workspace directory key length=%d want 24", len(WorkspaceDirectoryKey(a)))
+	}
+	if WorkspaceDirectoryKey(a) != WorkspaceKey(a)[:workspaceKeyHexLength] {
+		t.Fatal("short directory key must be a stable truncation of the full runtime identity key")
+	}
+	if legacyBranchAwareWorkspaceKey(a) != WorkspaceKey(a) {
+		t.Fatal("legacy branch-aware directory key must remain the original full identity key")
+	}
+	if WorkspaceDirectoryKey(a) == legacyWorkspaceKey(a.Repository) {
+		t.Fatal("short V1 directory key must not reuse repository-only workspace key")
 	}
 }
 

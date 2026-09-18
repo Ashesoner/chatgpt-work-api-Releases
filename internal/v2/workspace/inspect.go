@@ -3,7 +3,6 @@ package workspace
 import (
 	"context"
 	"errors"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -40,19 +39,12 @@ func (m *Manager) Inspect(ctx context.Context, repositoryURL, targetRef string) 
 	if err != nil {
 		return Snapshot{}, err
 	}
-	container := filepath.Join(m.root, WorkspaceKey(workspaceIdentity))
-	repoPath := filepath.Join(container, "repo")
-	metadataPath := filepath.Join(container, "workspace.json")
-	info, err := os.Lstat(repoPath)
-	if errors.Is(err, os.ErrNotExist) {
-		return Snapshot{}, errors.New("WORKSPACE_NOT_FOUND")
-	}
+	resolved, err := resolveWorkspaceAt(m.dataRoot, identity.Repository, workspaceIdentity.TargetRef)
 	if err != nil {
 		return Snapshot{}, err
 	}
-	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
-		return Snapshot{}, errors.New("WORKSPACE_REPOSITORY_PATH_INVALID")
-	}
+	repoPath := resolved.repoPath
+	metadataPath := filepath.Join(resolved.container, "workspace.json")
 	if err := m.verifyRepository(ctx, repoPath, identity); err != nil {
 		return Snapshot{}, err
 	}

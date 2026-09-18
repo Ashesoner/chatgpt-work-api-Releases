@@ -150,7 +150,7 @@ Metadata lives beside it as `workspace.json`.
 
 The workspace is intentionally durable across Coding session closes and ChatGPT conversation changes. `coding_close` does not delete it.
 
-The existing Desktop workspace manager lists repository + branch, can open the backend-resolved `<workspace>/repo` folder, and can delete/rebuild one selected branch. The frontend does not construct local paths or hashes. Legacy repository-only workspaces are not auto-migrated and are resolved only when their metadata exactly matches repository + target ref. Deleting a workspace loses local/uncommitted work in that selected branch.
+The existing Desktop workspace manager lists repository + branch, can open the backend-resolved `<workspace>/repo` folder, and can delete/rebuild one selected branch. The frontend does not construct local paths or hashes. Original V1 64-hex branch-aware and upstream repository-only workspaces are not auto-migrated and are resolved only when their metadata exactly matches repository + target ref. Deleting a workspace loses local/uncommitted work in that selected branch.
 
 ## `coding_exec`
 

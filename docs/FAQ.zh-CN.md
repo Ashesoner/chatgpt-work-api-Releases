@@ -151,11 +151,11 @@ CODING_WORKSPACE_BUSY
 
 如果只把新的 `CWapi.exe` / `runtime` 放进另一个干净目录，新目录会创建新的 `CWapi-data`。这时旧 workspace 还在原目录，只是新安装看不到，于是看起来像“丢了”。
 
-从原版 2.0.5 升级 branch-aware V1 时，先关闭 active session、退出 CWapi、完整备份 `CWapi-data`，并保留原版 2.0.5。legacy repository-only workspace 不自动迁移。需要 rollback 时退出 V1，把升级前 data 备份恢复到原版旁边，再启动 2.0.5。V1 仍保留较长 workspace hash 路径，缩短路径属于 V1 后低优先级事项。
+从原版 2.0.5 升级 branch-aware V1 时，先关闭 active session、退出 CWapi、完整备份 `CWapi-data`，并保留原版 2.0.5。新的 durable/runtime workspace 使用更短目录 ID；原 V1 64 位 branch-aware 与上游 repository-only workspace 都不自动迁移，仅在 metadata 精确匹配时复用。需要 rollback 时退出 V1，把升级前 data 备份恢复到原版旁边，再启动 2.0.5。
 
 ## GUI 怎么管理不同 branch 的 workspace？
 
-Coding 页打开“管理工作区”。每项显示 repository + branch，并提供“打开文件夹”和分支级“删除并重建”。本地 path/hash 由后端解析，前端不拼接。legacy workspace 不自动迁移。
+Coding 页打开“管理工作区”。每项显示 repository + branch，并提供“打开文件夹”和分支级“删除并重建”。本地 path/hash 由后端解析，前端不拼接。原 V1 64 位 branch-aware 与上游 repository-only workspace 都不自动迁移。
 
 ## 重复启动 CWapi 会怎样？
 

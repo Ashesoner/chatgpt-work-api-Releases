@@ -150,7 +150,7 @@ CWapi-data/workspaces/<workspace-hash>/repo
 
 Coding session close 或 ChatGPT conversation 结束都不会删除它。
 
-现有 Desktop 工作区管理会按 repository + branch 列出 workspace，可打开后端解析出的 `<workspace>/repo`，也可只删除并重建选中的 branch。前端不计算本地 path/hash。legacy repository-only workspace 不自动迁移，只有 metadata 的 repository + target_ref 精确匹配时才可解析。删除会同时删除该选中 branch 中未 push/未提交的本地工作。
+现有 Desktop 工作区管理会按 repository + branch 列出 workspace，可打开后端解析出的 `<workspace>/repo`，也可只删除并重建选中的 branch。前端不计算本地 path/hash。原 V1 64 位 branch-aware 与上游 repository-only workspace 都不自动迁移，只有 metadata 的 repository + target_ref 精确匹配时才可解析。删除会同时删除该选中 branch 中未 push/未提交的本地工作。
 
 ## `coding_exec`
 

@@ -114,7 +114,7 @@ Tunnel Runtime API key 不进入 config；启用后由 Service 从各自的 Wind
 
 ## Workspace maintenance
 
-Workspace maintenance 只存在于 Desktop surface，不暴露给 MCP。GUI 按 repository + target ref 列出 branch-aware workspace，可打开其 `repo` 文件夹，并按 branch 精确 Delete/Rebuild；破坏性维护继续使用全局 busy 策略。后端优先解析 branch-aware key，仅在 metadata 的 repository + target_ref 精确匹配时才允许 legacy repository-only fallback；下一次对应 `coding_open` 自动重建该 branch。
+Workspace maintenance 只存在于 Desktop surface，不暴露给 MCP。GUI 按 repository + target ref 列出 branch-aware workspace，可打开其 `repo` 文件夹，并按 branch 精确 Delete/Rebuild；破坏性维护继续使用全局 busy 策略。后端解析顺序为新的短 branch-aware 目录、原 V1 64 位 branch-aware 目录、再到上游 repository-only 目录；任何旧目录都只有在 metadata 的 repository + target_ref 精确匹配时才可复用，不自动迁移，也不 fallback 到其它 branch。
 
 ## Package
 

@@ -7,6 +7,8 @@ import (
 	"strings"
 )
 
+const workspaceKeyHexLength = 24
+
 // WorkspaceIdentity is the single durable/runtime identity for one Coding workspace.
 // Repository must already be the normalized owner/repository value. TargetRef is
 // always stored as refs/heads/<branch>.
@@ -41,18 +43,34 @@ func CanonicalTargetRef(raw string) (string, string, error) {
 	return "refs/heads/" + branch, branch, nil
 }
 
-// WorkspaceKey is the stable on-disk key for exactly one repository + branch.
-// The NUL separator prevents ambiguous concatenations. Existing repository-only
-// workspace keys are intentionally not reused or migrated.
-func WorkspaceKey(identity WorkspaceIdentity) string {
+func branchAwareWorkspaceDigest(identity WorkspaceIdentity) string {
 	sum := sha256.Sum256([]byte(identity.Repository + "\x00" + identity.TargetRef))
 	return hex.EncodeToString(sum[:])
 }
 
-// legacyWorkspaceKey returns the upstream 2.0.5 repository-only key. It is
-// retained only so pre-V1 maintenance code can still address old workspaces
-// until the branch-aware GUI/maintenance stage is implemented. New workspaces
-// must never use this key.
+// WorkspaceKey is the full stable runtime identity key for exactly one
+// repository + branch. Runtime Coding ownership keeps the full digest; path
+// shortening must not weaken active/opening/close identity semantics.
+func WorkspaceKey(identity WorkspaceIdentity) string {
+	return branchAwareWorkspaceDigest(identity)
+}
+
+// WorkspaceDirectoryKey is the stable short on-disk directory key. The full
+// repository + target_ref identity is always verified from workspace.json.
+func WorkspaceDirectoryKey(identity WorkspaceIdentity) string {
+	return branchAwareWorkspaceDigest(identity)[:workspaceKeyHexLength]
+}
+
+// legacyBranchAwareWorkspaceKey is the original V1 64-hex on-disk key.
+// Existing directories using it remain readable but are never renamed or
+// migrated automatically.
+func legacyBranchAwareWorkspaceKey(identity WorkspaceIdentity) string {
+	return branchAwareWorkspaceDigest(identity)
+}
+
+// legacyWorkspaceKey returns the upstream 2.0.5 repository-only 64-hex key.
+// Existing directories using it are considered only when workspace metadata
+// exactly matches the requested repository + target ref.
 func legacyWorkspaceKey(repositoryName string) string {
 	sum := sha256.Sum256([]byte(strings.ToLower(strings.TrimSpace(repositoryName))))
 	return hex.EncodeToString(sum[:])
