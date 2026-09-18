@@ -86,7 +86,7 @@ Required checks:
 12. the existing workspace manager renders repository + branch with Open Folder and Delete/Rebuild actions;
 13. no unrelated screen or service requires code changes.
 
-Do not launch the modified CWapi executable yet.
+The modified executable has now been used for V1 integration validation. The steps below are retained as the original Stage D procedure for future reruns.
 
 ## 5. Stage D — Real executable integration tests
 
@@ -240,24 +240,24 @@ Source/unit coverage must verify:
 - existing 64-hex runtime cache -> not selected for new commands; short runtime root is used instead, and Delete/Rebuild cleans both short and old runtime roots;
 - new SAFE cache environment points at the short runtime root.
 
-Runtime EXE regression is verified on the running 2026-09-18 01:25 V1 build: SAFE exposes a 24-hex runtime workspace ID and `go test ./...` passes without cache overrides. New durable short-key directory creation remains covered by source/unit tests rather than a separate live-branch creation test.
+Runtime EXE regression is verified on the running 2026-09-18 01:25 V1 build: SAFE exposes a 24-hex runtime workspace ID and `go test ./...` passes without cache overrides. A newly opened branch was also user-verified to create the 24-hex durable workspace directory `26ef383d26f7b9b3baed3f05`.
 
 ## 8. Acceptance criteria
 
-V1 is accepted only if all are true:
+V1 closeout status is recorded below. `[x]` means verified by automated/source checks or real V1 use; `[~]` means explicitly waived as non-blocking and must not be read as a performed test:
 
 ```text
-[ ] Same repository + different branches can work concurrently.
-[ ] Same repository + same branch keeps existing BUSY/resume behavior.
-[ ] Workspace paths are branch-specific and new durable/runtime workspace IDs are short.
-[ ] Original V1 64-hex and upstream repository-only legacy directories remain compatible without automatic migration.
-[ ] Close/cleanup does not leave stale BUSY entries.
-[ ] GUI lists repository + branch separately.
-[ ] Open Folder targets the correct workspace.
-[ ] Delete and Rebuild affects only the selected branch workspace.
-[ ] Original major Coding/Agent/Tunnel/security controls regressions are absent.
-[ ] Second CWapi instance is blocked with a clear user-facing message.
-[ ] Upgrade and rollback steps are documented and verified.
+[x] Same repository + different branches can work concurrently.
+[x] Same repository + same branch keeps existing BUSY/resume behavior.
+[x] Workspace paths are branch-specific and new durable/runtime workspace IDs are short; a newly opened branch created durable ID 26ef383d26f7b9b3baed3f05 and SAFE runtime uses 24 hex.
+[x] Original V1 64-hex and upstream repository-only legacy directories remain compatible without automatic migration.
+[x] Close/cleanup does not leave stale BUSY entries.
+[x] GUI lists repository + branch separately.
+[x] Open Folder targets the correct workspace.
+[x] Delete and Rebuild affects only the selected branch workspace (source/unit coverage).
+[x] No V1 regression was found in the exercised Coding/Agent/Tunnel/security controls; automated/source checks and ongoing V1 use remain the evidence, not an exhaustive platform certification.
+[~] Additional V1-primary normal/admin duplicate-launch UI testing was explicitly waived for V1 closeout. Existing source/unit coverage and the completed original-2.0.5-primary -> V1-second isolation test remain recorded below.
+[x] Upgrade and rollback steps are documented and user-verified with the V1 executable and the required prompts/coding files.
 ```
 
 ## 9. Test results
@@ -307,7 +307,7 @@ Fill this section during implementation.
   - `applicationOptions` still configures Wails `SingleInstanceLock` and the existing `OnSecondInstanceLaunch` callback.
   - The callback only reads the existing Wails context, unminimises/shows the main window, and invokes a Warning `runtime.MessageDialog` with the documented conflict text. Unit tests verify that service/config/startup state are not replaced or restarted.
   - No process scan, custom mutex/file lock, custom IPC, explicit second-instance `Quit`, tray change, `HideWindowOnClose` change, shutdown change, or V2 service restart was added.
-  - Final EXE tests remain pending for normal->normal and administrator->administrator launches. Mixed privilege/elevation behavior is documented as the known Wails/Windows callback boundary and is not reimplemented in V1.
+  - Additional V1-primary normal->normal and administrator->administrator executable tests were explicitly waived for V1 closeout. They are not reported as PASS. Mixed privilege/elevation behavior remains the documented Wails/Windows callback boundary and is not reimplemented in V1.
 
 
 ### Documentation/release consistency
@@ -338,20 +338,20 @@ Fill this section during implementation.
 
 ### Executable integration
 
-- Status: PARTIAL PASS (D0 cross-version direction completed; D1 V1-primary probe pending)
+- Status: ACCEPTED WITH D1 WAIVED (D0 cross-version direction completed; additional V1-primary UI probe not run)
 - Notes:
   - D0 `original 2.0.5 primary -> V1 second`: PASS for single-instance conflict isolation. The V1 process exited with code 0 and never became an independent running CWapi instance.
   - D0 observed exactly one CWapi process after the launch attempt and no additional MCP/service, Tunnel client, or listener set; the original listeners remained 32123/32124 and its two Tunnel-client listeners remained unchanged.
   - No `CWapi 已在运行` V1 WarningDialog was observed in this cross-version direction. This is acceptable under the chosen V1 target because the original 2.0.5 primary owns the Wails second-instance callback and does not contain the V1 warning implementation.
-  - D1 must verify `V1 primary -> V1 second` separately: the V1 primary should handle the callback, restore/show its window, and display the documented WarningDialog.
+  - D1 `V1 primary -> V1 second` additional normal/admin executable testing was explicitly waived by the user for V1 closeout. The expected callback/WarningDialog behavior remains documented from source/unit coverage, but this line is not claimed as a real executable PASS.
   - Runtime regression is verified on the running 2026-09-18 01:25 V1 build: GUI Open Folder visibly opens the workspace, SAFE exposes a 24-hex runtime workspace ID, and an unmodified `go test ./...` completes without the previously observed Windows `Filename too long` failure.
   - Formal V1 acceptance target: guarantee single-instance conflict isolation; provide the explicit WarningDialog when V1 is the already-running primary; do not require the V1 warning when an original 2.0.5 build owns the primary instance.
   - Do not interpret mixed-privilege callback behavior as a V1 IPC regression; it is outside the V1 design scope.
 
 ### Upgrade/rollback
 
-- Status: DOCUMENTED / EXECUTABLE VERIFICATION PENDING
+- Status: PASS (user-verified V1 upgrade/rollback)
 - Notes:
   - The original 2.0.5 -> V1 procedure now explicitly requires exiting CWapi, backing up complete `CWapi-data`, retaining the original 2.0.5 build, and not auto-migrating original V1 64-hex or upstream repository-only workspaces.
   - Rollback is documented as exiting V1, restoring the pre-upgrade data backup when required, and launching the untouched original build.
-  - Real executable upgrade/rollback verification remains intentionally unrun in this stage.
+  - Real V1 upgrade/rollback was user-verified by replacing the executable together with the required files under `prompts/coding/`, while preserving the existing portable data/configuration flow.

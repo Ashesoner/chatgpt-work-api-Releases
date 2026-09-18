@@ -260,7 +260,7 @@ Implemented V1 changes in this fork:
 
 ## 13. Release documentation status
 
-Before final executable integration, the public Coding/workspace documentation is aligned to the V1 contract:
+At V1 validation closeout, the public Coding/workspace documentation is aligned to the V1 contract:
 
 - `coding_open` selects repository + target ref;
 - `coding_exec`, `coding_status`, and `coding_close` accept optional `target_ref`;
@@ -270,7 +270,7 @@ Before final executable integration, the public Coding/workspace documentation i
 - original V1 64-hex branch-aware and upstream repository-only workspaces are not auto-migrated; both are reused only when metadata exactly matches the requested identity;
 - the original 2.0.5 upgrade/rollback procedure requires a pre-upgrade `CWapi-data` backup and keeping the original build available;
 - same-privilege duplicate launches use Wails single-instance isolation; a V1 primary handles the callback and shows the explicit warning, while an original 2.0.5 primary may reject the V1 second process without showing the V1 warning; mixed Windows privilege levels remain a documented Wails/Windows boundary;
-- new durable and SAFE runtime workspace/cache directories use short stable IDs; old 64-hex durable workspace directories remain compatible in place without migration, while old 64-hex runtime caches are no longer selected for new commands. The running 2026-09-18 01:25 V1 build verified the SAFE runtime path uses 24 hex and the formerly failing Go test path now passes without overrides; new durable short-key creation is covered by source/unit tests.
+- new durable and SAFE runtime workspace/cache directories use short stable IDs; old 64-hex durable workspace directories remain compatible in place without migration, while old 64-hex runtime caches are no longer selected for new commands. The running 2026-09-18 01:25 V1 build verified the SAFE runtime path uses 24 hex and the formerly failing Go test path now passes without overrides; a newly opened branch was also user-verified to create the 24-hex durable workspace directory `26ef383d26f7b9b3baed3f05`.
 
 Runtime Coding prompt text under `prompts/` has now been reviewed separately and aligned to the same branch-aware routing contract.
 
