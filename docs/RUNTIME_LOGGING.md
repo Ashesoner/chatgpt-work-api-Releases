@@ -19,9 +19,9 @@ The Service exposes current structured state only:
 
 ## Agent output
 
-Broker state records request IDs, counts, lifecycle state and bounded error codes. Normal operation does not persist full `messages`, answer content, tool schemas, tool arguments or tool results.
+Broker state records request IDs, counts, lifecycle state, per-request progress/deadline metadata, current image-byte usage and bounded error codes. Normal operation does not persist full `messages`, answer content, tool schemas, tool arguments, stream chunks or tool results.
 
-Agent has no file/image attachment pipeline. Runtime snapshots and logs therefore contain only request lifecycle metadata and bounded errors, never file or image bodies.
+Agent has an image-only in-memory attachment path. Runtime snapshots and logs contain only request/image metadata and bounded errors, never image bodies or base64 payloads; raw image bytes live only for the request lifecycle and are released at terminal state.
 
 Agent activity is request-plane observability only. `request_id`, revision, pending/inflight and `no_request` never claim that a third-party command is running. Optional client-supplied task/correlation metadata may be carried in the request payload but is not promoted into logs as command truth.
 

@@ -134,7 +134,7 @@ If the same repository + target ref already has an active Coding session, `resum
 CODING_WORKSPACE_BUSY
 ```
 
-This is intentional for the same branch. A different branch of the same repository may be opened concurrently. For `coding_exec` / `coding_status` / `coding_close`, `target_ref` is optional only while exactly one branch is active; with multiple active branches omission returns `CODING_SESSION_AMBIGUOUS`, while an explicitly named inactive branch returns `CODING_SESSION_NOT_ACTIVE` with no fallback.
+This is intentional for the same branch. A different branch of the same repository may be opened concurrently. For `coding_exec` / `coding_status` / `coding_attachment` / `coding_close`, `target_ref` is optional only while exactly one branch is active; with multiple active branches omission returns `CODING_SESSION_AMBIGUOUS`, while an explicitly named inactive branch returns `CODING_SESSION_NOT_ACTIVE` with no fallback.
 
 ## Does upgrading CWapi delete my workspace?
 
@@ -156,11 +156,11 @@ At the same Windows privilege level, Wails SingleInstanceLock keeps the second n
 
 ## Can Coding MCP transfer files or images?
 
-No. The formal Coding catalog contains only `coding_open`, `coding_exec`, `coding_status`, and `coding_close`. Source, Markdown, JSON, logs, and other text can be inspected with bounded `coding_exec` commands; Coding MCP emits neither `ImageContent` nor `EmbeddedResource`.
+Raster images: yes. Ordinary files: no. The Coding catalog includes `coding_attachment(repository_url, target_ref?, paths)`, which reads bounded raster images from the selected active workspace and follows the same branch selector rules as exec/status/close and emits native `ImageContent` with original bytes/MIME. Source, Markdown, JSON, logs, and other text still use bounded `coding_exec` commands; generic files are not emitted as `EmbeddedResource`.
 
 ## Can Agent accept files or images?
 
-No. Agent accepts text and tool JSON only. A top-level `attachments` field returns `AGENT_FILE_ATTACHMENTS_UNSUPPORTED`; any non-text message content part, including `image_url`, returns `AGENT_MEDIA_INPUT_UNSUPPORTED` before broker admission.
+Raster images: yes. Generic files: no. Agent accepts inline raster images through `data:` `image_url` parts and CWapi inline image attachments. Remote image URLs, SVG, PDFs, archives, Office files, and other generic files remain unsupported.
 
 ## Does uploading a file to the ChatGPT conversation copy it into my local workspace/client?
 

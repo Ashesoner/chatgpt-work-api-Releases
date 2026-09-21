@@ -41,6 +41,10 @@ type TunnelLifecycle interface {
 	Snapshot() tunnel.Snapshot
 }
 
+type TunnelReconfigurer interface {
+	Reconfigure(context.Context, v2config.TunnelConfig, string) error
+}
+
 type Dependencies struct {
 	Coding          mcpserver.CodingService
 	CodingLifecycle CodingLifecycle
@@ -323,6 +327,62 @@ func (s *Service) Snapshot() Snapshot {
 	}
 }
 
+func (s *Service) UpdateCodingOpenAITunnel(config v2config.TunnelConfig, apiKey string) (Snapshot, error) {
+	return s.updateOpenAITunnel(config, apiKey, false)
+}
+
+func (s *Service) UpdateAgentOpenAITunnel(config v2config.TunnelConfig, apiKey string) (Snapshot, error) {
+	return s.updateOpenAITunnel(config, apiKey, true)
+}
+
+func (s *Service) updateOpenAITunnel(config v2config.TunnelConfig, apiKey string, agent bool) (Snapshot, error) {
+	if s == nil {
+		return Snapshot{State: "unavailable"}, errors.New("V2_SERVICE_UNAVAILABLE")
+	}
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+	if s.closed {
+		return s.Snapshot(), errors.New("V2_SERVICE_CLOSED")
+	}
+
+	s.mu.RLock()
+	before := s.config
+	configPath := s.configPath
+	var lifecycle TunnelLifecycle = s.tunnel
+	if agent {
+		lifecycle = s.agentTunnel
+	}
+	s.mu.RUnlock()
+	reconfigurer, ok := lifecycle.(TunnelReconfigurer)
+	if !ok || reconfigurer == nil {
+		if agent {
+			return s.Snapshot(), errors.New("V2_AGENT_TUNNEL_RECONFIGURE_UNAVAILABLE")
+		}
+		return s.Snapshot(), errors.New("V2_TUNNEL_RECONFIGURE_UNAVAILABLE")
+	}
+
+	candidate := before
+	if agent {
+		candidate.AgentTunnel = config
+	} else {
+		candidate.Tunnel = config
+	}
+	if err := v2config.Validate(candidate); err != nil {
+		return s.Snapshot(), err
+	}
+	if err := v2config.SaveAtomic(configPath, candidate); err != nil {
+		return s.Snapshot(), err
+	}
+	if err := reconfigurer.Reconfigure(context.Background(), config, apiKey); err != nil {
+		rollbackErr := v2config.SaveAtomic(configPath, before)
+		return s.Snapshot(), errors.Join(err, rollbackErr)
+	}
+	s.mu.Lock()
+	s.config = candidate
+	s.lastError = ""
+	s.mu.Unlock()
+	return s.Snapshot(), nil
+}
 func (s *Service) UpdateCodexAccessProfile(profile string) (Snapshot, error) {
 	if s == nil {
 		return Snapshot{State: "unavailable"}, errors.New("V2_SERVICE_UNAVAILABLE")

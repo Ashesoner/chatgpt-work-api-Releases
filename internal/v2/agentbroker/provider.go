@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	maxRequestBody              = DefaultMaxBatchBytes
+	maxRequestBody              = 24 * 1024 * 1024
 	defaultSSEHeartbeatInterval = 15 * time.Second
 	DefaultModel                = agentprotocol.DefaultModel
 )
@@ -35,7 +35,7 @@ type Provider struct {
 	cfg       v2config.AgentConfig
 	broker    *Broker
 	adapter   agentprotocol.Adapter
-	optimizer agentprotocol.ContextOptimizer
+	optimizer *agentprotocol.ContextOptimizer
 	server    *http.Server
 	listen    net.Listener
 	heartbeat time.Duration
@@ -189,23 +189,25 @@ func (p *Provider) handleChatCompletions(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusRequestEntityTooLarge, "request_too_large")
 		return
 	}
-	conversation, err := p.adapter.DecodeRequest(body)
+	decoded, err := p.adapter.DecodeRequestWithMedia(body)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, errorCode(err))
 		return
 	}
-	conversation, _, err = p.optimizer.Optimize(conversation)
+	conversation, _, err := p.optimizer.Optimize(decoded.Conversation)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, errorCode(err))
 		return
 	}
-	handle, err := p.broker.Enqueue(conversation)
+	handle, err := p.broker.EnqueueWithAttachments(conversation, decoded.Attachments)
 	if err != nil {
 		switch errorCode(err) {
 		case "AGENT_BRIDGE_UNAVAILABLE":
 			writeError(w, http.StatusServiceUnavailable, "AGENT_BRIDGE_UNAVAILABLE")
 		case "AGENT_BUSY":
 			writeError(w, http.StatusTooManyRequests, "AGENT_BUSY")
+		case "AGENT_MEDIA_BUSY":
+			writeError(w, http.StatusTooManyRequests, "AGENT_MEDIA_BUSY")
 		default:
 			writeError(w, http.StatusServiceUnavailable, "AGENT_UNAVAILABLE")
 		}
@@ -254,8 +256,12 @@ func (p *Provider) handleStreamingCompletion(w http.ResponseWriter, r *http.Requ
 	if flusher != nil {
 		flusher.Flush()
 	}
+	stream := handle.Stream()
+	streamID, streamModel, streamCreated := handle.Metadata()
+	streamMetadata := agentprotocol.CompletionMetadata{ID: streamID, Model: streamModel, Created: streamCreated}
 	waited := make(chan requestWaitResult, 1)
 	go func() { result, err := handle.Wait(r.Context()); waited <- requestWaitResult{result: result, err: err} }()
+	streamed := false
 	interval := p.heartbeat
 	if interval <= 0 {
 		interval = defaultSSEHeartbeatInterval
@@ -271,7 +277,28 @@ func (p *Provider) handleStreamingCompletion(w http.ResponseWriter, r *http.Requ
 			if flusher != nil {
 				flusher.Flush()
 			}
+		case chunk, ok := <-stream:
+			if !ok {
+				stream = nil
+				continue
+			}
+			if err := p.writeSSEChunk(w, chunk, streamMetadata); err != nil {
+				return
+			}
+			streamed = true
+			if flusher != nil {
+				flusher.Flush()
+			}
 		case waitedResult := <-waited:
+			if stream != nil {
+				for chunk := range stream {
+					if err := p.writeSSEChunk(w, chunk, streamMetadata); err != nil {
+						return
+					}
+					streamed = true
+				}
+				stream = nil
+			}
 			if waitedResult.err != nil {
 				code := errorCode(waitedResult.err)
 				payload, _ := json.Marshal(map[string]any{"error": map[string]any{"message": code, "type": "cwapi_error", "code": code}})
@@ -281,7 +308,13 @@ func (p *Provider) handleStreamingCompletion(w http.ResponseWriter, r *http.Requ
 				}
 				return
 			}
-			if err := p.writeSSECompletion(w, waitedResult.result); err != nil {
+			if streamed {
+				metadata := completionMetadata(waitedResult.result)
+				if waitedResult.result.Completion.FinishReason != "" {
+					_ = p.writeSSEChunk(w, agentprotocol.StreamChunk{FinishReason: waitedResult.result.Completion.FinishReason}, metadata)
+				}
+				_, _ = io.WriteString(w, "data: [DONE]\n\n")
+			} else if err := p.writeSSECompletion(w, waitedResult.result); err != nil {
 				code := errorCode(err)
 				payload, _ := json.Marshal(map[string]any{"error": map[string]any{"message": code, "type": "cwapi_error", "code": code}})
 				_, _ = fmt.Fprintf(w, "event: error\ndata: %s\n\ndata: [DONE]\n\n", payload)
@@ -292,6 +325,19 @@ func (p *Provider) handleStreamingCompletion(w http.ResponseWriter, r *http.Requ
 			return
 		}
 	}
+}
+
+func (p *Provider) writeSSEChunk(w io.Writer, chunk agentprotocol.StreamChunk, metadata agentprotocol.CompletionMetadata) error {
+	encoded, err := p.adapter.EncodeStreamChunk(chunk, metadata)
+	if err != nil {
+		return err
+	}
+	payload, err := json.Marshal(encoded)
+	if err != nil {
+		return errors.New("AGENT_STREAM_CONVERSION_FAILED")
+	}
+	_, _ = fmt.Fprintf(w, "data: %s\n\n", payload)
+	return nil
 }
 
 func (p *Provider) writeSSECompletion(w io.Writer, result RequestResult) error {

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/AAAYNMMM/CWapi/internal/repository"
+	"github.com/AAAYNMMM/CWapi/internal/v2/attachments"
 	"github.com/AAAYNMMM/CWapi/internal/v2/codextoolhost"
 	"github.com/AAAYNMMM/CWapi/internal/v2/mcpserver"
 	"github.com/AAAYNMMM/CWapi/internal/v2/workspace"
@@ -20,6 +21,8 @@ const openingRepository = "<opening>"
 type prepareFunc func(context.Context, workspace.PrepareInput) (workspace.Result, error)
 type inspectFunc func(context.Context, string, string) (workspace.Snapshot, error)
 type execFunc func(context.Context, string, codextoolhost.ExecInput) (codextoolhost.ExecResult, error)
+type attachmentFunc func(context.Context, string, []string, attachments.Policy) (attachments.Batch, error)
+type listProcessesFunc func(string) []codextoolhost.ProcessSummary
 type readyFunc func() error
 type stopProcessesFunc func(context.Context, string) error
 
@@ -29,6 +32,8 @@ type Service struct {
 	prepare             prepareFunc
 	inspect             inspectFunc
 	execute             execFunc
+	loadAttachments     attachmentFunc
+	listProcesses       listProcessesFunc
 	ready               readyFunc
 	setAccessProfile    func(string) error
 	setNetworkAccess    func(bool) error
@@ -60,6 +65,8 @@ type record struct {
 	currentBranch   string
 	detached        bool
 	trackedDirty    bool
+	trackingHead    string
+	divergence      string
 	resumed         bool
 	busy            bool
 	closing         bool
@@ -91,6 +98,7 @@ func New(manager *workspace.Manager, host *codextoolhost.Host) (*Service, error)
 	service.setNetworkAccess = host.SetNetworkAccess
 	service.setRemoteGitRewrite = host.SetRemoteGitRewrite
 	service.stopProcesses = host.StopWorkspace
+	service.listProcesses = host.WorkspaceProcesses
 	service.closeRuntime = host.Close
 	return service, nil
 }
@@ -104,7 +112,7 @@ func newService(prepare prepareFunc, execute execFunc, inspect inspectFunc, read
 		ready = readiness[0]
 	}
 	return &Service{
-		prepare: prepare, inspect: inspect, execute: execute, ready: ready,
+		prepare: prepare, inspect: inspect, execute: execute, loadAttachments: attachments.LoadWorkspace, ready: ready,
 		sessions: make(map[string]*record), active: make(map[string]string), opening: make(map[string]*openingRecord),
 	}, nil
 }
@@ -191,10 +199,9 @@ func (s *Service) Open(ctx context.Context, input mcpserver.CodingOpenInput) (mc
 			cancelPrepare()
 			return mcpserver.CodingOpenOutput{}, fmt.Errorf("CODING_WORKSPACE_BUSY: %s %s", identity.Repository, workspaceIdentity.TargetRef)
 		}
-		output, resumeErr := s.resumeActiveLocked(input, owner)
 		s.mu.Unlock()
 		cancelPrepare()
-		return output, resumeErr
+		return s.resumeActive(ctx, input, workspaceKey, owner)
 	}
 	s.active[workspaceKey] = openingRepository
 	s.opening[workspaceKey] = opening
@@ -254,36 +261,102 @@ func (s *Service) Open(ctx context.Context, input mcpserver.CodingOpenInput) (mc
 	}, nil
 }
 
-// resumeActiveLocked returns public state for the repository while retaining its internal session generation.
-// s.mu must be held by the caller. This lets a new Web GPT conversation
-// resume an active internal session without weakening the one-session-per-repo
-// protection.
-func (s *Service) resumeActiveLocked(input mcpserver.CodingOpenInput, owner string) (mcpserver.CodingOpenOutput, error) {
+// resumeActive refreshes local Git truth before handing an idle durable session
+// to a new Web GPT conversation. The baseline target/resolved commit stay fixed,
+// while current HEAD/branch/dirty/tracking state follow the workspace.
+func (s *Service) resumeActive(ctx context.Context, input mcpserver.CodingOpenInput, workspaceKey, owner string) (mcpserver.CodingOpenOutput, error) {
+	s.mu.RLock()
 	record := s.sessions[owner]
-	if record == nil {
+	stillActive := s.active[workspaceKey] == owner
+	s.mu.RUnlock()
+	if record == nil || !stillActive {
 		return mcpserver.CodingOpenOutput{}, errors.New("CODING_ACTIVE_SESSION_MISSING")
 	}
 	record.mu.Lock()
-	defer record.mu.Unlock()
 	if record.closing {
+		record.mu.Unlock()
 		return mcpserver.CodingOpenOutput{}, errors.New("CODING_SESSION_CLOSING")
 	}
 	if !sameTargetRef(input.TargetRef, record.targetRef) {
-		return mcpserver.CodingOpenOutput{}, fmt.Errorf("CODING_RESUME_TARGET_MISMATCH: requested=%s active=%s", input.TargetRef, record.targetRef)
+		active := record.targetRef
+		record.mu.Unlock()
+		return mcpserver.CodingOpenOutput{}, fmt.Errorf("CODING_RESUME_TARGET_MISMATCH: requested=%s active=%s", input.TargetRef, active)
 	}
 	if expected := strings.TrimSpace(input.ExpectedCommit); expected != "" && !strings.EqualFold(expected, record.resolvedCommit) {
-		return mcpserver.CodingOpenOutput{}, fmt.Errorf("CODING_RESUME_COMMIT_MISMATCH: expected=%s active=%s", expected, record.resolvedCommit)
+		active := record.resolvedCommit
+		record.mu.Unlock()
+		return mcpserver.CodingOpenOutput{}, fmt.Errorf("CODING_RESUME_COMMIT_MISMATCH: expected=%s active=%s", expected, active)
+	}
+	busy := record.busy
+	record.mu.Unlock()
+	if !busy && s.inspect != nil {
+		if _, err := s.refreshRecord(ctx, record); err != nil {
+			return mcpserver.CodingOpenOutput{}, fmt.Errorf("CODING_RESUME_INSPECT_FAILED: %w", err)
+		}
+	}
+	s.mu.RLock()
+	stillActive = s.active[workspaceKey] == owner && s.sessions[owner] == record
+	s.mu.RUnlock()
+	if !stillActive {
+		return mcpserver.CodingOpenOutput{}, errors.New("CODING_ACTIVE_SESSION_MISSING")
+	}
+	record.mu.Lock()
+	closing := record.closing
+	busy = record.busy
+	record.mu.Unlock()
+	if closing {
+		return mcpserver.CodingOpenOutput{}, errors.New("CODING_SESSION_CLOSING")
 	}
 	state := "ready"
-	if record.busy {
+	if busy {
 		state = "busy"
 	}
+	return record.openOutput(state, true), nil
+}
+
+func (r *record) openOutput(state string, resumed bool) mcpserver.CodingOpenOutput {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	return mcpserver.CodingOpenOutput{
-		Repository: record.repository, TargetRef: record.targetRef,
-		ResolvedCommit: record.resolvedCommit, CurrentHead: record.currentHead,
-		CurrentBranch: record.currentBranch, Detached: record.detached,
-		TrackedDirty: record.trackedDirty, Resumed: true, State: state,
-	}, nil
+		Repository: r.repository, TargetRef: r.targetRef, ResolvedCommit: r.resolvedCommit,
+		CurrentHead: r.currentHead, CurrentBranch: r.currentBranch, Detached: r.detached,
+		TrackedDirty: r.trackedDirty, Resumed: resumed, State: state,
+	}
+}
+
+func (r *record) applyWorkspaceSnapshot(snapshot workspace.Snapshot) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if snapshot.TargetRef != "" {
+		r.targetRef = snapshot.TargetRef
+	}
+	if snapshot.ResolvedCommit != "" {
+		r.resolvedCommit = snapshot.ResolvedCommit
+	}
+	r.currentHead = snapshot.CurrentHead
+	r.currentBranch = snapshot.CurrentBranch
+	r.detached = snapshot.Detached
+	r.trackingHead = snapshot.TrackingHead
+	r.trackedDirty = snapshot.TrackedDirty
+	r.divergence = snapshot.Divergence
+}
+
+func (s *Service) refreshRecord(ctx context.Context, record *record) (workspace.Snapshot, error) {
+	if s.inspect == nil || record == nil {
+		return workspace.Snapshot{}, errors.New("WORKSPACE_INSPECT_UNAVAILABLE")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	record.mu.Lock()
+	repositoryURL, targetRef := record.repositoryURL, record.targetRef
+	record.mu.Unlock()
+	snapshot, err := s.inspect(ctx, repositoryURL, targetRef)
+	if err != nil {
+		return workspace.Snapshot{}, err
+	}
+	record.applyWorkspaceSnapshot(snapshot)
+	return snapshot, nil
 }
 
 func sameTargetRef(left, right string) bool {
@@ -310,6 +383,7 @@ func (s *Service) Exec(ctx context.Context, input mcpserver.CodingExecInput) (mc
 	result, err := s.execute(commandCtx, record.path, codextoolhost.ExecInput{
 		Action: input.Action, ProcessID: input.ProcessID, Command: input.Command,
 		Argv: input.Argv, CWD: input.CWD, TimeoutSeconds: input.TimeoutSeconds,
+		StdoutCursor: input.StdoutCursor, StderrCursor: input.StderrCursor,
 	})
 	// Release foreground operation ownership as soon as the local executor has
 	// reached a terminal return. The deferred call remains as a panic/early-exit
@@ -318,9 +392,43 @@ func (s *Service) Exec(ctx context.Context, input mcpserver.CodingExecInput) (mc
 	if err != nil {
 		return mcpserver.CodingExecOutput{}, err
 	}
+	if action != "start" && result.State != "running" && result.State != "stopping" {
+		_, _ = s.refreshRecord(ctx, record)
+	}
 	return mcpserver.CodingExecOutput{
 		State: result.State, ProcessID: result.ProcessID, PID: result.PID, StartedAt: result.StartedAt, ExitCode: result.ExitCode,
-		Stdout: result.Stdout, Stderr: result.Stderr, Truncated: result.Truncated,
+		Stdout: result.Stdout, Stderr: result.Stderr, StdoutCursor: result.StdoutCursor, StderrCursor: result.StderrCursor,
+		StdoutTruncated: result.StdoutTruncated, StderrTruncated: result.StderrTruncated, Truncated: result.Truncated,
+	}, nil
+}
+func (s *Service) Attachment(ctx context.Context, input mcpserver.CodingAttachmentInput) (mcpserver.CodingAttachmentOutput, error) {
+	_, record, err := s.lookupRepository(input.RepositoryURL, input.TargetRef)
+	if err != nil {
+		return mcpserver.CodingAttachmentOutput{}, err
+	}
+	attachmentCtx, finish, err := record.beginOperation(ctx, "attachment", "")
+	if err != nil {
+		return mcpserver.CodingAttachmentOutput{}, err
+	}
+	defer finish()
+	loader := s.loadAttachments
+	if loader == nil {
+		return mcpserver.CodingAttachmentOutput{}, errors.New("CODING_ATTACHMENT_READER_UNAVAILABLE")
+	}
+	batch, err := loader(attachmentCtx, record.path, input.Paths, attachments.CodingPolicy())
+	if err != nil {
+		return mcpserver.CodingAttachmentOutput{}, err
+	}
+	metadata := make([]attachments.Metadata, 0, len(batch.Items))
+	for _, item := range batch.Items {
+		if item.Metadata.Kind != "image" {
+			return mcpserver.CodingAttachmentOutput{}, errors.New("CODING_ATTACHMENT_IMAGE_ONLY")
+		}
+		metadata = append(metadata, item.Metadata)
+	}
+	return mcpserver.CodingAttachmentOutput{
+		Repository: record.repository, TargetRef: record.targetRef, State: "completed", TotalBytes: batch.TotalBytes,
+		Attachments: metadata, ContentItems: batch.Items,
 	}, nil
 }
 func (r *record) beginOperation(ctx context.Context, action, command string) (context.Context, func(), error) {
@@ -368,51 +476,50 @@ func (s *Service) Status(ctx context.Context, input mcpserver.CodingStatusInput)
 	}
 	record.mu.Lock()
 	busy := record.busy
-	activeAction := record.activeAction
-	activeCommand := record.activeCommand
-	activeStartedAt := record.activeStartedAt
+	activeAction, activeCommand, activeStartedAt := record.activeAction, record.activeCommand, record.activeStartedAt
 	record.mu.Unlock()
+	var inspectErr error
+	if !busy && s.inspect != nil {
+		_, inspectErr = s.refreshRecord(ctx, record)
+	}
+
+	record.mu.Lock()
 	state := "ready"
 	if busy {
 		state = "busy"
 	}
 	output := mcpserver.CodingStatusOutput{
-		State: state, Repository: record.repository,
-		TargetRef: record.targetRef, ResolvedCommit: record.resolvedCommit,
-		CurrentHead: record.currentHead, TrackedDirty: record.trackedDirty,
-		CurrentBranch: record.currentBranch, Detached: record.detached,
+		State: state, Repository: record.repository, TargetRef: record.targetRef, ResolvedCommit: record.resolvedCommit,
+		CurrentHead: record.currentHead, CurrentBranch: record.currentBranch, Detached: record.detached,
+		TrackingHead: record.trackingHead, TrackedDirty: record.trackedDirty, Divergence: record.divergence,
+	}
+	path := record.path
+	record.mu.Unlock()
+	if inspectErr != nil {
+		output.LastError = "WORKSPACE_INSPECT_FAILED: " + inspectErr.Error()
+	}
+	if s.listProcesses != nil {
+		for _, process := range s.listProcesses(path) {
+			output.PersistentProcesses = append(output.PersistentProcesses, mcpserver.CodingProcessSummary{
+				ProcessID: process.ProcessID, State: process.State, Command: process.Command, PID: process.PID,
+				StartedAt: process.StartedAt, ElapsedSeconds: process.ElapsedSeconds,
+			})
+		}
 	}
 	if busy {
-		output.ActiveAction = activeAction
-		output.ActiveCommand = activeCommand
+		output.ActiveAction, output.ActiveCommand = activeAction, activeCommand
 		if !activeStartedAt.IsZero() {
 			output.ActiveStartedAt = activeStartedAt.Format(time.RFC3339Nano)
-			elapsed := time.Since(activeStartedAt)
-			elapsedSeconds := int64(0)
-			if elapsed > 0 {
-				elapsedSeconds = int64(elapsed / time.Second)
+			elapsedSeconds := int64(time.Since(activeStartedAt) / time.Second)
+			if elapsedSeconds < 0 {
+				elapsedSeconds = 0
 			}
 			output.ActiveElapsedSeconds = &elapsedSeconds
 		}
 	}
-	if busy || s.inspect == nil {
-		return output, nil
-	}
-	workspaceState, inspectErr := s.inspect(ctx, record.repositoryURL, record.targetRef)
-	if inspectErr != nil {
-		output.LastError = "WORKSPACE_INSPECT_FAILED: " + inspectErr.Error()
-		return output, nil
-	}
-	output.TargetRef = workspaceState.TargetRef
-	output.ResolvedCommit = workspaceState.ResolvedCommit
-	output.CurrentHead = workspaceState.CurrentHead
-	output.CurrentBranch = workspaceState.CurrentBranch
-	output.Detached = workspaceState.Detached
-	output.TrackingHead = workspaceState.TrackingHead
-	output.TrackedDirty = workspaceState.TrackedDirty
-	output.Divergence = workspaceState.Divergence
 	return output, nil
 }
+
 func (s *Service) Close(ctx context.Context, input mcpserver.CodingCloseInput) (mcpserver.CodingCloseOutput, error) {
 	if s == nil {
 		return mcpserver.CodingCloseOutput{}, errors.New("CODING_SERVICE_UNAVAILABLE")

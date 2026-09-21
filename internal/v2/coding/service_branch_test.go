@@ -6,6 +6,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/AAAYNMMM/CWapi/internal/v2/attachments"
 	"github.com/AAAYNMMM/CWapi/internal/v2/codextoolhost"
 	"github.com/AAAYNMMM/CWapi/internal/v2/mcpserver"
 	"github.com/AAAYNMMM/CWapi/internal/v2/workspace"
@@ -19,8 +20,9 @@ const (
 type branchTestRuntime struct {
 	service *Service
 
-	mu            sync.Mutex
-	executedPaths []string
+	mu              sync.Mutex
+	executedPaths   []string
+	attachmentPaths []string
 }
 
 func newBranchTestRuntime(t *testing.T) *branchTestRuntime {
@@ -75,6 +77,18 @@ func newBranchTestRuntime(t *testing.T) *branchTestRuntime {
 	service, err := newService(prepare, execute, inspect)
 	if err != nil {
 		t.Fatal(err)
+	}
+	service.loadAttachments = func(_ context.Context, path string, paths []string, _ attachments.Policy) (attachments.Batch, error) {
+		runtime.mu.Lock()
+		runtime.attachmentPaths = append(runtime.attachmentPaths, path)
+		runtime.mu.Unlock()
+		name := "ui.png"
+		ref := "ui.png"
+		if len(paths) > 0 {
+			ref = paths[0]
+		}
+		item := attachments.Item{Metadata: attachments.Metadata{Name: name, Ref: ref, MIMEType: "image/png", Kind: "image", Size: 1}, Data: []byte{0}}
+		return attachments.Batch{Items: []attachments.Item{item}, TotalBytes: 1}, nil
 	}
 	runtime.service = service
 	return runtime
@@ -322,5 +336,66 @@ func TestUnknownTargetRefDoesNotFallback(t *testing.T) {
 	})
 	if err != nil || status.CurrentBranch != "branch-a" {
 		t.Fatalf("existing branch must remain active: %#v err=%v", status, err)
+	}
+}
+
+func TestBranchAwareAttachmentRoutesByTargetRef(t *testing.T) {
+	runtime := newBranchTestRuntime(t)
+	runtime.open(t, "branch-a", false)
+
+	single, err := runtime.service.Attachment(context.Background(), mcpserver.CodingAttachmentInput{
+		RepositoryURL: branchTestRepositoryURL,
+		Paths:         []string{"screenshots/a.png"},
+	})
+	if err != nil {
+		t.Fatalf("repository-only attachment with one branch: %v", err)
+	}
+	if single.TargetRef != "refs/heads/branch-a" {
+		t.Fatalf("repository-only attachment target=%q", single.TargetRef)
+	}
+
+	runtime.open(t, "branch-b", false)
+	for _, tc := range []struct {
+		ref      string
+		wantRef  string
+		wantPath string
+	}{
+		{ref: "branch-a", wantRef: "refs/heads/branch-a", wantPath: "C:/tmp/branch-a"},
+		{ref: "refs/heads/branch-b", wantRef: "refs/heads/branch-b", wantPath: "C:/tmp/branch-b"},
+	} {
+		before := len(runtime.attachmentPaths)
+		output, err := runtime.service.Attachment(context.Background(), mcpserver.CodingAttachmentInput{
+			RepositoryURL: branchTestRepositoryURL,
+			TargetRef:     tc.ref,
+			Paths:         []string{"screenshots/ui.png"},
+		})
+		if err != nil {
+			t.Fatalf("attachment %s: %v", tc.ref, err)
+		}
+		if output.TargetRef != tc.wantRef {
+			t.Fatalf("attachment %s target=%q want %q", tc.ref, output.TargetRef, tc.wantRef)
+		}
+		runtime.mu.Lock()
+		if len(runtime.attachmentPaths) != before+1 || runtime.attachmentPaths[len(runtime.attachmentPaths)-1] != tc.wantPath {
+			t.Fatalf("attachment %s paths=%#v want last %q", tc.ref, runtime.attachmentPaths, tc.wantPath)
+		}
+		runtime.mu.Unlock()
+	}
+
+	_, err = runtime.service.Attachment(context.Background(), mcpserver.CodingAttachmentInput{
+		RepositoryURL: branchTestRepositoryURL,
+		Paths:         []string{"screenshots/ui.png"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "CODING_SESSION_AMBIGUOUS") {
+		t.Fatalf("repository-only attachment must be ambiguous with two active branches, got %v", err)
+	}
+
+	_, err = runtime.service.Attachment(context.Background(), mcpserver.CodingAttachmentInput{
+		RepositoryURL: branchTestRepositoryURL,
+		TargetRef:     "missing-branch",
+		Paths:         []string{"screenshots/ui.png"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "CODING_SESSION_NOT_ACTIVE") {
+		t.Fatalf("missing target attachment: %v", err)
 	}
 }

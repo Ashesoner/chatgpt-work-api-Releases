@@ -12,166 +12,18 @@ func NewOpenAICompatibleAdapter() OpenAICompatibleAdapter { return OpenAICompati
 func (OpenAICompatibleAdapter) Name() string { return "openai-compatible" }
 
 func (OpenAICompatibleAdapter) Capabilities() Capabilities {
-	return Capabilities{Streaming: true, Tools: true, ParallelTools: true, Images: false, Files: false}
+	return Capabilities{Streaming: true, Tools: true, ParallelTools: true, Images: true, Files: false}
 }
 
 func (adapter OpenAICompatibleAdapter) DecodeRequest(payload []byte) (Conversation, error) {
-	var root map[string]any
-	if err := decodeJSON(payload, &root); err != nil || root == nil {
-		return Conversation{}, &CanonicalError{Code: "AGENT_REQUEST_JSON_INVALID", Kind: ErrorExternalRequest}
-	}
-	if _, present := root["attachments"]; present {
-		return Conversation{}, &CanonicalError{Code: "AGENT_FILE_ATTACHMENTS_UNSUPPORTED", Kind: ErrorCapability}
-	}
-	if model, present := root["model"]; present && model != nil {
-		if _, ok := model.(string); !ok {
-			return Conversation{}, &CanonicalError{Code: "AGENT_MODEL_INVALID", Kind: ErrorExternalRequest}
-		}
-	}
-	if stream, present := root["stream"]; present && stream != nil {
-		if _, ok := stream.(bool); !ok {
-			return Conversation{}, &CanonicalError{Code: "AGENT_STREAM_INVALID", Kind: ErrorExternalRequest}
-		}
-	}
-
-	messagesValue, present := root["messages"]
-	if !present || messagesValue == nil {
-		return Conversation{}, &CanonicalError{Code: "AGENT_MESSAGES_REQUIRED", Kind: ErrorExternalRequest}
-	}
-	rawMessages, ok := messagesValue.([]any)
-	if !ok || len(rawMessages) == 0 {
-		return Conversation{}, &CanonicalError{Code: "AGENT_MESSAGES_INVALID", Kind: ErrorExternalRequest}
-	}
-
-	conversation := Conversation{Model: strings.TrimSpace(stringValue(root["model"])), Stream: boolValue(root["stream"])}
-	if conversation.Model == "" {
-		conversation.Model = DefaultModel
-	}
-	knownCalls := make(map[string]struct{})
-	for _, raw := range rawMessages {
-		message, err := adapter.decodeMessage(raw, knownCalls)
-		if err != nil {
-			return Conversation{}, err
-		}
-		conversation.Messages = append(conversation.Messages, message)
-		for _, call := range message.ToolCalls {
-			if _, duplicate := knownCalls[call.ID]; duplicate {
-				return Conversation{}, &CanonicalError{Code: "AGENT_TOOL_CALL_ID_DUPLICATE", Kind: ErrorToolMapping}
-			}
-			knownCalls[call.ID] = struct{}{}
-		}
-	}
-
-	tools, err := decodeTools(root["tools"])
+	decoded, err := adapter.DecodeRequestWithMedia(payload)
 	if err != nil {
 		return Conversation{}, err
 	}
-	conversation.Tools = tools
-	choice, err := decodeToolChoice(root["tool_choice"])
-	if err != nil {
-		return Conversation{}, err
+	if len(decoded.Attachments.Items) > 0 {
+		return Conversation{}, &CanonicalError{Code: "AGENT_MEDIA_REQUIRES_MULTIMODAL_DECODE", Kind: ErrorCapability}
 	}
-	conversation.ToolChoice = choice
-	if choice.Name != "" && !hasTool(conversation.Tools, choice.Name) {
-		return Conversation{}, &CanonicalError{Code: "AGENT_TOOL_CHOICE_UNDECLARED", Kind: ErrorToolMapping, Detail: choice.Name}
-	}
-	format, err := decodeResponseFormat(root["response_format"])
-	if err != nil {
-		return Conversation{}, err
-	}
-	conversation.ResponseFormat = format
-	metadata, err := decodeMetadata(root["metadata"])
-	if err != nil {
-		return Conversation{}, err
-	}
-	conversation.Metadata = metadata
-	return conversation, nil
-}
-
-func (OpenAICompatibleAdapter) decodeMessage(raw any, knownCalls map[string]struct{}) (Message, error) {
-	value, ok := raw.(map[string]any)
-	if !ok {
-		return Message{}, &CanonicalError{Code: "AGENT_MESSAGES_INVALID", Kind: ErrorExternalRequest}
-	}
-	role := Role(strings.TrimSpace(stringValue(value["role"])))
-	switch role {
-	case RoleSystem, RoleDeveloper, RoleUser, RoleAssistant, RoleTool:
-	default:
-		return Message{}, &CanonicalError{Code: "AGENT_MESSAGE_ROLE_INVALID", Kind: ErrorExternalRequest}
-	}
-	message := Message{Role: role, Name: strings.TrimSpace(stringValue(value["name"]))}
-	if role != RoleTool {
-		content, err := decodeMessageContent(value["content"])
-		if err != nil {
-			return Message{}, err
-		}
-		message.Content = content
-	}
-
-	if rawCalls, present := value["tool_calls"]; present && rawCalls != nil {
-		if role != RoleAssistant {
-			return Message{}, &CanonicalError{Code: "AGENT_TOOL_CALL_ROLE_INVALID", Kind: ErrorToolMapping}
-		}
-		calls, err := decodeToolCalls(rawCalls, ErrorExternalRequest)
-		if err != nil {
-			return Message{}, err
-		}
-		message.ToolCalls = calls
-	}
-	if role == RoleAssistant && message.Content == "" && len(message.ToolCalls) == 0 {
-		return Message{}, &CanonicalError{Code: "AGENT_MESSAGE_CONTENT_REQUIRED", Kind: ErrorExternalRequest}
-	}
-	if role == RoleTool {
-		callID := strings.TrimSpace(stringValue(value["tool_call_id"]))
-		if callID == "" {
-			return Message{}, &CanonicalError{Code: "AGENT_TOOL_RESULT_CALL_ID_REQUIRED", Kind: ErrorToolMapping}
-		}
-		if _, found := knownCalls[callID]; !found {
-			return Message{}, &CanonicalError{Code: "AGENT_TOOL_RESULT_CALL_NOT_FOUND", Kind: ErrorToolMapping, Detail: callID}
-		}
-		var content string
-		var err error
-		if _, textParts := value["content"].([]any); textParts {
-			content, err = decodeMessageContent(value["content"])
-		} else {
-			content, err = canonicalContent(value["content"], "AGENT_TOOL_RESULT_CONTENT_INVALID", ErrorCanonical)
-		}
-		if err != nil {
-			return Message{}, err
-		}
-		message.Content = ""
-		message.ToolResult = &ToolResult{CallID: callID, Name: message.Name, Content: content}
-	}
-	return message, nil
-}
-
-func decodeMessageContent(raw any) (string, error) {
-	if raw == nil {
-		return "", nil
-	}
-	if text, ok := raw.(string); ok {
-		return text, nil
-	}
-	parts, ok := raw.([]any)
-	if !ok {
-		return "", &CanonicalError{Code: "AGENT_MESSAGE_CONTENT_UNSUPPORTED", Kind: ErrorCapability}
-	}
-	var text strings.Builder
-	for _, rawPart := range parts {
-		part, ok := rawPart.(map[string]any)
-		if !ok {
-			return "", &CanonicalError{Code: "AGENT_MESSAGE_CONTENT_UNSUPPORTED", Kind: ErrorCapability}
-		}
-		if strings.TrimSpace(stringValue(part["type"])) != "text" {
-			return "", &CanonicalError{Code: "AGENT_MEDIA_INPUT_UNSUPPORTED", Kind: ErrorCapability}
-		}
-		partText, ok := part["text"].(string)
-		if !ok {
-			return "", &CanonicalError{Code: "AGENT_MESSAGE_CONTENT_UNSUPPORTED", Kind: ErrorCapability}
-		}
-		text.WriteString(partText)
-	}
-	return text.String(), nil
+	return decoded.Conversation, nil
 }
 
 func decodeTools(raw any) ([]ToolDefinition, error) {
@@ -205,7 +57,6 @@ func decodeTools(raw any) ([]ToolDefinition, error) {
 			if !valid {
 				return nil, &CanonicalError{Code: "AGENT_TOOL_PARAMETERS_INVALID", Kind: ErrorExternalRequest, Detail: name}
 			}
-			parameters = cloneJSONMap(parameters)
 		}
 		tools = append(tools, ToolDefinition{Name: name, Description: stringValueUntrimmed(function["description"]), Parameters: parameters})
 	}
@@ -283,7 +134,7 @@ func decodeResponseFormat(raw any) (ResponseFormat, error) {
 		if !ok || len(schema) == 0 {
 			return ResponseFormat{}, &CanonicalError{Code: "AGENT_RESPONSE_FORMAT_INVALID", Kind: ErrorExternalRequest}
 		}
-		return ResponseFormat{Type: typeName, JSONSchema: cloneJSONMap(schema)}, nil
+		return ResponseFormat{Type: typeName, JSONSchema: schema}, nil
 	default:
 		return ResponseFormat{}, &CanonicalError{Code: "AGENT_RESPONSE_FORMAT_INVALID", Kind: ErrorExternalRequest}
 	}

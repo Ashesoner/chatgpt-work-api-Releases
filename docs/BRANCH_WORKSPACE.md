@@ -1,10 +1,10 @@
 # Branch-aware Workspace V1
 
-> Baseline: upstream CWapi 2.0.5. This document records the design, user workflow, upgrade notes, compatibility boundaries, and custom changes for this fork.
+> Historical V1 baseline: upstream CWapi 2.0.5. This document preserves the original V1 design, validation, upgrade notes, and compatibility record. The `feature/upstream-2.0.6-integration` line reapplies these branch-aware guarantees on top of upstream CWapi 2.0.6; historical 2.0.5/V1 test results below remain intentionally unchanged.
 
 ## 1. Goal
 
-CWapi 2.0.5 currently treats one Git repository as one durable workspace. This prevents multiple ChatGPT conversations from working on different branches of the same repository at the same time.
+At the original V1 baseline, upstream CWapi 2.0.5 treated one Git repository as one durable workspace. This prevents multiple ChatGPT conversations from working on different branches of the same repository at the same time.
 
 V1 changes workspace identity from repository-only to repository + canonical target ref, while preserving existing behavior for the same repository + same branch.
 
@@ -287,3 +287,33 @@ Remediation classification:
 - Vitest / `@vitest/mocker` redirect-mock advisory: upstream marks versions before `4.1.11` as affected and states older 3.x is not planned to receive the fix. Therefore fully clearing the current Vitest-family audit requires moving the Vitest line to at least `4.1.11`, which is a major/breaking-version upgrade from 3.2.4. npm audit's `3.2.7` direct-package suggestion only addresses the older critical Vitest issue; it still resolves `@vitest/mocker@3.2.7`, which remains inside the newer advisory's affected range.
 
 Because `npm audit --omit=dev` is clean and CWapi embeds built `frontend/dist` rather than Node development tooling, these findings do **not block a V1 test build**. They remain a development-toolchain security follow-up, particularly if Vite/Vitest development servers are exposed beyond localhost. No dependency update is performed in V1 C.5.
+
+## 15. Upstream 2.0.6 integration status
+
+The branch-aware V1 line has been integrated with upstream CWapi 2.0.6 on `feature/upstream-2.0.6-integration`.
+
+Integration base and upstream source:
+
+- branch-aware V1 base: `a0a5dd75cca5680cedd7ec2f911bb5f265d2be82`;
+- upstream 2.0.6 source: `2c3490c78af17475660c37fff41fc3509c5179c5`;
+- the integration remains an uncommitted merge while executable validation and documentation are finalized.
+
+The integration preserves the V1 repository + canonical target-ref workspace identity, short durable/runtime workspace paths, legacy workspace compatibility, branch-aware GUI maintenance, and V1 single-instance behavior. It also adopts upstream 2.0.6 Coding cursor/process reporting, local Git truth refresh, `coding_attachment`, Tunnel profiles/hot reconfiguration, Agent lifecycle/streaming/image handling, and the 2.0.6 prompt/tool surface.
+
+For `coding_attachment`, the fork applies the same optional `target_ref` selector contract as exec/status/close: a single active branch remains repository-only compatible; multiple active branches without a target return `CODING_SESSION_AMBIGUOUS`; an explicitly inactive target returns `CODING_SESSION_NOT_ACTIVE`; no cross-branch fallback is allowed.
+
+Executable validation on 2026-09-20 confirmed the refreshed ChatGPT Coding tool catalog, existing V1 workspace resume, persistent-process stdout cursor behavior, raster attachment success and non-image/`.git` rejection, close/reopen resume state, GUI/Tunnel migration, full Go tests, frontend production build, and staged diff checks. Same-repository dual-branch routing and same-branch concurrent-operation executable probes were not rerun at user request because their source/unit regression coverage is retained. Agent bridge open/exchange/close smoke testing passed; no local client request was injected, so this is not recorded as a full Agent end-to-end request test.
+
+## 16. Deferred next-version planning continuity
+
+This is a post-2.0.6 follow-up and is not implemented by the current integration.
+
+Planned behavior:
+
+- every branch workspace uses one default planning set: `.planning/task_plan.md`, `.planning/findings.md`, and `.planning/progress.md`;
+- the planning files are initially treated as normal repository files and may be committed with that branch; Local-only / dual-storage policy is deferred until broader Skill interoperability requires it;
+- multiple ChatGPT conversations may resume and use the same repository + branch over time, but the existing Coding service remains authoritative for execution exclusion: while one foreground Coding operation is active, another operation on that same workspace is rejected with `CODING_COMMAND_ACTIVE`;
+- before a conversation resumes modification after another conversation may have progressed the branch, it must reread the planning files and refresh `coding_status` so stale conversational context does not override current repository truth;
+- `PLAN_ID` is not part of the default CWapi model; one branch has one active planning set unless a future requirement proves otherwise;
+- the implementation should, where practical, recognize and continue projects already prepared by Codex using the upstream `planning-with-files` Skill instead of forcing a second CWapi-specific planning format; if robust compatibility is disproportionately complex, it may be deferred rather than weakening safety;
+- a Skill-management GUI may later expose installed/default Skills and planning status, but it is lower priority than reliable planning persistence and resume behavior.

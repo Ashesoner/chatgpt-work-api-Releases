@@ -1,6 +1,6 @@
 {
   "schema": "cwapi.config.v3",
-  "version": "2.0.5",
+  "version": "2.0.6",
   "mcp": {
     "port": 32124,
     "coding_token": "cwapi_coding_AAAAAAAAAAAAAAAAAAAAAAAAAA",

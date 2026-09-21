@@ -1,4 +1,4 @@
-# CWapi 2.0.5 GUI
+# CWapi 2.0.6 GUI
 
 窗口固定为 430 × 625、frameless、不可拉伸；主内容区支持鼠标滚轮纵向滚动；标题栏 `×` 只隐藏主窗口到系统托盘，不终止 CWapi，真正退出由托盘菜单执行；同权限级别下再次启动正常 CWapi 时，Wails single-instance lock 阻止第二实例正常运行，已有实例恢复/显示窗口并弹出“CWapi 已在运行” Warning MessageDialog。Windows 不同权限/提升级别之间的 callback 属于 Wails/Windows 已知边界，V1 不重做 IPC。主界面通过页签分为 Coding 与 Agent 两页，两个页面只显示并管理各自链路。
 

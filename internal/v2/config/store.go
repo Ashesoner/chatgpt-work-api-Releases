@@ -77,7 +77,7 @@ func migratePrevious(path string) (Config, error) {
 	if err := decodeStrict(payload, &cfg); err != nil {
 		return Config{}, err
 	}
-	if cfg.Schema != Schema || cfg.Version != previousVersion {
+	if cfg.Schema != Schema || (cfg.Version != previousVersion && cfg.Version != olderVersion) {
 		return Config{}, errors.New("CONFIG_MIGRATION_NOT_APPLICABLE")
 	}
 	cfg.Version = Version

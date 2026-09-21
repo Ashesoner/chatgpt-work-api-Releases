@@ -1,4 +1,4 @@
-# CWapi 2.0 Coding Guide
+﻿# CWapi 2.0 Coding Guide
 
 [English](CODING_GUIDE.md) | [简体中文](CODING_GUIDE.zh-CN.md)
 
@@ -28,10 +28,12 @@ The bundled Codex runtime is **not** a second coding agent. CWapi uses app-serve
 coding_open
 coding_exec
 coding_status
+coding_attachment
 coding_close
+load_skill
 ```
 
-Web GPT never receives or stores a public Coding session ID. `coding_open` always selects a workspace with `repository_url + target_ref`; later exec/status/close calls should also include the matching `target_ref` whenever more than one branch of that repository may be active.
+Web GPT never receives or stores a public Coding session ID. `coding_open` always selects a workspace with `repository_url + target_ref`; later exec/status/attachment/close calls should also include the matching `target_ref` whenever more than one branch of that repository may be active.
 
 ## Recommended end-to-end workflow
 
@@ -205,7 +207,7 @@ When several searches are independent, group them sensibly. Avoid repeatedly rea
 
 Source, Markdown, JSON, config, logs, and other inspectable text should be read through `coding_exec`.
 
-Coding MCP has no file or image transfer tool and does not emit MCP `ImageContent` or `EmbeddedResource` content.
+Ordinary files are not transferred through Coding MCP. `coding_attachment(repository_url, target_ref?, paths)` reads only bounded raster images inside the selected active workspace and emits native MCP `ImageContent` with the original bytes/MIME; it does not recompress, resize, transcode, or OCR them.
 
 For large files, prefer bounded output: a relevant range, search matches with context, or a project-specific query. This reduces MCP round trips and avoids flooding the conversation with irrelevant bytes.
 
@@ -299,7 +301,7 @@ If authentication fails, verify the Windows user's GitHub/Git credential setup o
 
 ## Files and images
 
-Coding MCP does not transfer files or images. Inspect source, Markdown, JSON, configuration, logs, and other text with bounded `coding_exec` commands. Binary files and images remain in the workspace and are not copied into the ChatGPT conversation.
+Coding MCP transfers only bounded raster images through `coding_attachment(repository_url, target_ref?, paths)`; it uses the same branch selector rules as exec/status/close, and ordinary files remain unsupported. Source, Markdown, JSON, configuration, logs, and other text use bounded `coding_exec` commands. Supported raster images are returned as native `ImageContent` with original bytes/MIME and no recompression, resizing, transcoding, or OCR.
 
 ## Closing and later resuming
 
@@ -348,7 +350,7 @@ coding_status(repository_url=<repo>, target_ref="branch-b")
 coding_close(repository_url=<repo>, target_ref="branch-a")
 ```
 
-If `branch-a` and `branch-b` are both active, omitting `target_ref` from exec/status/close returns `CODING_SESSION_AMBIGUOUS`. Naming a non-active branch returns `CODING_SESSION_NOT_ACTIVE`; CWapi never falls back to another branch.
+If `branch-a` and `branch-b` are both active, omitting `target_ref` from exec/status/attachment/close returns `CODING_SESSION_AMBIGUOUS`. Naming a non-active branch returns `CODING_SESSION_NOT_ACTIVE`; CWapi never falls back to another branch.
 
 ## Related documentation
 

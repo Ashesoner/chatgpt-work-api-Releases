@@ -2,7 +2,7 @@
 
 ## First-contact operating manual
 
-2.0.5 将 first-contact prompt 分成全局文件，而不是把大量经验硬编码进 Go 常量。CWapi 启动时扫描并缓存一次 `prompts/`：Coding 与 Agent 各有独立 Core/Rules，共享 Skills。MCP initialize 的 `instructions` 只拼接当前 mode 的 Core + Rules + Skill 清单（ID/name/Description），Skill body 由 `load_skill(name)` 按 Rules 需要加载。
+2.0.6 将 first-contact prompt 分成全局文件，而不是把大量经验硬编码进 Go 常量。CWapi 启动时扫描并缓存一次 `prompts/`：Coding 与 Agent 各有独立 Core/Rules，共享 Skills。MCP initialize 的 `instructions` 只拼接当前 mode 的 Core + Rules + Skill 清单（ID/name/Description），Skill body 由 `load_skill(name)` 按 Rules 需要加载。
 
 Core 只描述通信协议与工具使用；Rules 描述 mode-specific 行为和 Skill routing；Skills 保存 coding/debugging/git/testing/release 等任务经验。修改 Rules/Skills/Core 后必须重启 CWapi。没有 workspace-specific Skill、Profile、热加载、数据库或 GUI 管理。
 
@@ -10,22 +10,24 @@ Core 只描述通信协议与工具使用；Rules 描述 mode-specific 行为和
 
 ## Coding GPT
 
-Connect a custom MCP to the Coding endpoint only. The Coding surface exposes exactly five tools:
+Connect a custom MCP to the Coding endpoint only. The Coding surface exposes exactly six tools:
 
 - `coding_open`
 - `coding_exec`
 - `coding_status`
+- `coding_attachment`
 - `coding_close`
 - `load_skill`
 
-Coding MCP has no file or image transfer tool. Read inspectable repository text through exact `coding_exec` calls.
+Coding MCP exposes `coding_attachment(repository_url,target_ref?,paths)` for raster images already inside the selected active workspace. It emits native `ImageContent` with the original bytes/MIME and does not recompress, resize, transcode, or OCR. Read ordinary repository text through exact `coding_exec` calls.
 
 A typical turn is:
 
 1. `coding_open(repository_url,target_ref,expected_commit?,resume?)`；
 2. inspect/read/edit/verify with exact `coding_exec(repository_url,target_ref?,command,argv,cwd?,timeout_seconds?)` calls；
 3. inspect HEAD/dirty/divergence with `coding_status(repository_url,target_ref?)` when Git truth is needed；
-4. `coding_close(repository_url,target_ref?)` when the task is genuinely finished。
+4. inspect raster output with `coding_attachment(repository_url,target_ref?,paths)` when visual artifacts matter；
+5. `coding_close(repository_url,target_ref?)` when the task is genuinely finished。
 
 The Coding GPT is the only reasoning agent. CWapi sends exact commands to the bundled private Codex app-server `command/exec` development tool; it never sends an instruction to a Codex agent. Pass arguments as an argv array, not as one shell-quoted command string. In SAFE, prefer PowerShell cmdlets and repository tools that work under Windows constrained language mode.
 
@@ -39,11 +41,11 @@ At the start of a Coding conversation/task, call `coding_open` with repository +
 
 `resume=false` keeps branch ownership protection: an already-active repository + target ref returns `CODING_WORKSPACE_BUSY`. A workspace still opening, a session closing, or an incompatible ref/expected commit is not silently adopted.
 
-Continue later Coding calls with the same `repository_url` and, when more than one branch of that repository may be active, the matching `target_ref`. Different branches may be active concurrently. Omitting `target_ref` on exec/status/close is compatible only while that repository has exactly one active branch; multiple active branches return `CODING_SESSION_AMBIGUOUS`, and a named inactive branch returns `CODING_SESSION_NOT_ACTIVE` without fallback.
+Continue later Coding calls with the same `repository_url` and, when more than one branch of that repository may be active, the matching `target_ref`. Different branches may be active concurrently. Omitting `target_ref` on exec/status/attachment/close is compatible only while that repository has exactly one active branch; multiple active branches return `CODING_SESSION_AMBIGUOUS`, and a named inactive branch returns `CODING_SESSION_NOT_ACTIVE` without fallback.
 
 ### Files and images
 
-CWapi 2.0.5 does not transfer files or images through Coding MCP. There is no attachment tool and the MCP layer does not emit `ImageContent` or `EmbeddedResource`.
+CWapi 2.0.6 transfers raster images through branch-aware `coding_attachment` only. The MCP layer emits native `ImageContent` with original image bytes; it does not emit generic-file `EmbeddedResource`.
 
 Read source, Markdown, JSON, logs, configuration and other text directly through `coding_exec`, using exact tools such as `rg`, `git show`, PowerShell text reads or repository-specific commands. Prefer bounded, relevant output rather than moving whole files when only part of a file is needed.
 
@@ -55,7 +57,7 @@ Use SAFE when the task should remain confined to the owned workspace. SAFE has w
 
 Network access is selected independently in either profile. Remote Git Rewrite is a separate advanced capability and defaults OFF; enable it only for an intended force/delete remote update. Unsafe push transports, receive-pack injection, CWapi recovery-ref publication, protected internal paths and automatic elevation remain denied. Potentially destructive direct local Git operations create recovery refs when possible.
 
-For ordinary bounded work, omit `action` and use foreground `run`. For a development server, watcher, GUI or browser-auth flow, use `action=start`, retain `process_id`, inspect with bounded `action=status`, and finish with `action=stop`. A terminal process state ends polling. Closing the Coding session also stops that workspace's persistent processes.
+For ordinary bounded work, omit `action` and use foreground `run`. For any command expected to outlive a normal MCP call (development server, watcher, long build/test, GUI or browser-auth flow), use `action=start`, retain `process_id`, and call bounded `action=status` with the previous `stdout_cursor` / `stderr_cursor` so only new output is returned. A terminal process state ends polling; `coding_status` also lists active persistent process summaries without argv. Closing the Coding session stops that workspace's persistent processes.
 
 Call `coding_close(repository_url,target_ref?)` when the task is genuinely finished. Closing releases only the selected branch active session owner. It does not reset or clean Git, delete uncommitted changes, or delete the durable workspace. If a conversation disappears before close, a later conversation uses the same repository + target ref with `coding_open(..., resume=true)`.
 
@@ -69,13 +71,13 @@ Connect a separate custom MCP to the Agent endpoint. The Agent surface exposes `
 4. return structured responses/events and optional progress；
 5. continue until structured completion, or `agent_close()` when the bridge itself should detach。
 
-Web GPT is the sole planner. CWapi owns heartbeat, broker/request lifecycle and protocol conversion; local software executes tools. Natural-language silence is not liveness, progress is not completion, and completion is never inferred from words in assistant text.
+Web GPT is the sole planner. CWapi owns broker/request lifecycle and protocol conversion; local software executes tools. Heartbeat proves bridge liveness only, while delivery/progress/stream/response renew request activity under a fixed hard lifetime. Natural-language silence is not progress, and completion is never inferred from words in assistant text.
 
 Returned requests expose a compatibility `state=claimed` plus explicit `lifecycle_state`. A request may move through `QUEUED / CLAIMED / RUNNING / WAITING_TOOL / COMPLETED / FAILED_RETRYABLE / FAILED_FINAL`. A malformed tool call produces a structured retryable error and same-ID redelivery rather than stranding the request. Correct the call and continue.
 
 A `delivery` greater than 1 is the same request. On bridge interruption, preserve completed steps and use `previous_state/resume_reason/last_activity`; do not restart work merely because a new internal bridge generation was created. `agent_close` detaches the bridge but does not discard active requests.
 
-Tool-call arguments may be native JSON or OpenAI JSON string. For streamed arguments, CWapi concatenates all fragments before parsing once. Prefer several bounded tool calls over giant nested PowerShell/HTML/JS payloads because small calls are easier to retry and less fragile on Windows.
+Tool-call arguments may be native JSON or OpenAI JSON string. For `stream=true`, use `agent_exchange.stream_chunks` to submit incremental text/tool-call deltas; these calls ACK immediately and forward to local SSE. CWapi concatenates streamed arguments before one parse, and the final structured response must canonical-match emitted chunks. Prefer bounded tool calls over giant nested payloads.
 
 When a tool itself fails, return that failure as the normal tool result so Web GPT can decide the next action. A tool error is not automatically a final Agent failure. The local OpenAI client creates the next request containing `tool_result`; that request is tagged as such by CWapi.
 
@@ -85,4 +87,4 @@ Local clients may attach top-level `metadata`; `task_id` and `correlation_id` re
 
 ### Agent files and media
 
-Agent accepts text and tool JSON only. A top-level `attachments` field is rejected with `AGENT_FILE_ATTACHMENTS_UNSUPPORTED`; any non-text message content part, including `image_url`, is rejected with `AGENT_MEDIA_INPUT_UNSUPPORTED` before broker admission. `agent_exchange` emits no MCP file or image content. There is no reverse path that writes a ChatGPT conversation upload into local software.
+Agent accepts text, tool JSON, and bounded inline raster images in user or tool-result content. The Adapter parses each request once, creates ordered canonical `image_ref` parts, and delivers matching native `ImageContent` with original bytes/MIME. Generic files and remote image URLs are rejected; raw images are bounded by per-request limits plus a 64 MiB broker-wide budget. There is no reverse path that writes a ChatGPT conversation upload into local software.

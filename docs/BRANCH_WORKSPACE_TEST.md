@@ -2,6 +2,8 @@
 
 This file records the test plan, execution steps, expected results, and final acceptance results for the branch-aware workspace change.
 
+> This is the historical V1 acceptance record against the 2.0.5 baseline. The 2.0.6 integration reuses these branch-aware invariants and adds regression coverage for new 2.0.6 features such as `coding_attachment`; do not reinterpret the completed V1 observations below as tests of the 2.0.6 executable.
+
 ## 1. Test principle
 
 Development and most tests are performed through the currently working original CWapi against the fork's cloned source workspace. The original running CWapi executable is not replaced during source-level testing.
@@ -355,3 +357,55 @@ Fill this section during implementation.
   - The original 2.0.5 -> V1 procedure now explicitly requires exiting CWapi, backing up complete `CWapi-data`, retaining the original 2.0.5 build, and not auto-migrating original V1 64-hex or upstream repository-only workspaces.
   - Rollback is documented as exiting V1, restoring the pre-upgrade data backup when required, and launching the untouched original build.
   - Real V1 upgrade/rollback was user-verified by replacing the executable together with the required files under `prompts/coding/`, while preserving the existing portable data/configuration flow.
+
+## 2.0.6 integration validation
+
+- Status: PASS for the agreed integration acceptance scope; same-repository dual-branch and same-branch contention executable probes were explicitly skipped by the user.
+- Integration branch: `feature/upstream-2.0.6-integration`.
+- Branch-aware base: `a0a5dd75cca5680cedd7ec2f911bb5f265d2be82`.
+- Upstream 2.0.6 merge source: `2c3490c78af17475660c37fff41fc3509c5179c5`.
+
+### Tool catalog / workspace resume
+
+- PASS: after replacing the test executable/prompts and reconnecting the ChatGPT Coding app, the catalog exposed `coding_attachment`; `coding_exec` exposed `stdout_cursor` / `stderr_cursor`; open/exec/status/attachment/close exposed the intended branch-aware target-ref contract.
+- PASS: existing `feature/branch-aware-workspaces-v1` durable workspace resumed with `current_head=a0a5dd75cca5680cedd7ec2f911bb5f265d2be82`, aligned local tracking state, and clean tracked status.
+- PASS: `coding_close` followed by `coding_open(..., resume=true)` preserved branch, HEAD, tracking relation, and clean state without rebuilding the durable workspace.
+
+### 2.0.6 persistent output cursor
+
+- PASS: a CWapi-owned PowerShell persistent process emitted `tick-1` through `tick-5`.
+- First status returned `tick-1` / `tick-2` with `stdout_cursor=16`.
+- A later status using that cursor returned only `tick-3` / `tick-4` / `tick-5`, advanced the cursor to 40, and reported `state=completed`.
+- The protocol correctly rejected `timeout_seconds` for persistent `action=start`; the test was rerun using the documented persistent-process contract.
+
+### `coding_attachment`
+
+- PASS: `build/appicon.png` returned as `image/png`, with repository and canonical `target_ref` provenance.
+- PASS: `README.md` was rejected with `CODING_ATTACHMENT_IMAGE_ONLY`.
+- PASS: `.git/HEAD` was rejected with `ATTACHMENT_GIT_METADATA_FORBIDDEN`.
+- No temporary image file was required.
+
+### GUI / Tunnel
+
+- PASS (user verified): 2.0.6 GUI/Tunnel migration and normal operation.
+- PASS (user verified): existing Tunnel/profile state was available without re-entering the migrated Runtime API key.
+- The 2.0.6 profile store keeps profile metadata/Tunnel IDs in `CWapi-data/config/tunnel-profiles.json`; Runtime API keys remain in Windows Credential Manager rather than Git/project files.
+
+### Agent smoke test
+
+- PASS for bridge lifecycle smoke only: `agent_open` returned `ready`, `agent_exchange` returned `no_request` after the bounded 45-second wait with no queued local request, and `agent_close` returned `closed`.
+- No local OpenAI-compatible client request was injected, so full Agent request/response end-to-end behavior is not claimed as executable-tested here.
+
+### Final automated gates
+
+- PASS: `go test ./...`.
+- PASS: frontend production build via `npm run build` (`vite v7.0.0`).
+- PASS: `git diff --cached --check`.
+- PASS: no unmerged index entries.
+- PASS: `MERGE_HEAD` remains `2c3490c78af17475660c37fff41fc3509c5179c5`.
+- Build output did not add tracked-source changes beyond the intended integration set.
+
+### Explicitly not rerun
+
+- Same-repository dual-branch executable routing probe: skipped by user; branch-aware source/unit coverage remains in `internal/v2/coding/service_branch_test.go`.
+- Same-branch concurrent-operation executable contention probe: skipped by user; the service still enforces one foreground operation per selected workspace and returns `CODING_COMMAND_ACTIVE` while that record is busy.

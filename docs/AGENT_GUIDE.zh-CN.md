@@ -1,4 +1,4 @@
-# CWapi 2.0 Agent 指南
+﻿# CWapi 2.0 Agent 指南
 
 [English](AGENT_GUIDE.md) | [简体中文](AGENT_GUIDE.zh-CN.md)
 
@@ -189,32 +189,17 @@ Web GPT 可以返回普通 assistant content。CWapi 会把 Agent response 规�
 
 支持非 streaming 和 streaming。streaming 会输出 Chat Completions SSE chunks，并以 `[DONE]` 结束。
 
-## 文件和媒体不支持
+## 文件与图片
 
-Agent 只接受文本与 tool JSON。如果本地软件发送这种顶层 attachment 扩展：
+Agent 支持文本、tool JSON 与受限 inline 栅格图片。
 
-```json
-{"attachments": [...]}
-```
+- 标准 Chat Completions `image_url` 只接受 inline `data:` 栅格图片；远程 `http(s)` 图片 URL 返回 `AGENT_IMAGE_URL_UNSUPPORTED`。
+- CWapi 顶层 `attachments` 扩展只接受 inline 图片；非图片 attachment 返回 `AGENT_IMAGE_ATTACHMENT_REQUIRED`。
+- 文本文件、PDF、压缩包、Office 文档、SVG 等普通文件不会作为 MCP resource 传输。
+- `agent_exchange` 返回对应图片 metadata 与原生 MCP `ImageContent`，保持原始 bytes/MIME；不压缩、不缩放、不转码、不 OCR。
+- 图片只在 request 生命周期内保留，并受单 request 限制与 64 MiB broker-wide 原图预算约束。
 
-CWapi 返回：
-
-```text
-AGENT_FILE_ATTACHMENTS_UNSUPPORTED
-```
-
-文本文件、PDF、压缩包、Office 文档等普通文件不会被转换成 Agent MCP resource。
-
-任何非文本 Chat Completions message content（包括 `image_url`）都会在进入 broker 前返回：
-
-```text
-AGENT_MEDIA_INPUT_UNSUPPORTED
-```
-
-`agent_exchange` 只输出 JSON request/result，不返回 MCP file、resource 或 image content。
-
-ChatGPT 对话里手动上传的图片/文件也**没有反向通道**自动进入本地 OpenAI-compatible 客户端。本地客户端需要什么数据，就通过自己的 messages/tools 流程提供。
-
+手动上传到 ChatGPT 对话里的图片/文件仍然**不会反向自动进入**本地 OpenAI-compatible 客户端。
 ## `agent_close`
 
 连续 Agent 任务真正结束时才调用 `agent_close()`。

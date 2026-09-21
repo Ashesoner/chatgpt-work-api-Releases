@@ -1,4 +1,4 @@
-# CWapi Version Guide
+﻿# CWapi Version Guide
 
 [English](VERSION_GUIDE.md) | [简体中文](VERSION_GUIDE.zh-CN.md)
 
@@ -17,7 +17,7 @@ For a new installation, **2.x is the recommended line** unless you specifically 
 
 | Area | CWapi 2.x | CWapi 1.6.x |
 | --- | --- | --- |
-| Current release | `2.0.5` | `1.6.3` |
+| Current release | `2.0.6` | `1.6.3` |
 | Release branch | [`main`](https://github.com/AAAYNMMM/chatgpt-work-api-Releases/tree/main) | [`1.6.x`](https://github.com/AAAYNMMM/chatgpt-work-api-Releases/tree/1.6.x) |
 | ChatGPT connection | MCP through OpenAI Secure MCP Tunnel | Legacy Slack-mediated workflow |
 | Coding transport | Direct Coding MCP tool surface | GitHub + Slack workflow |
@@ -67,7 +67,7 @@ Both generations have persistent-work concepts, but the implementations and dire
 
 ## Release links
 
-- CWapi 2.0.5 portable: [`CWapi-v2.0.5.zip`](https://github.com/AAAYNMMM/chatgpt-work-api-Releases/releases/download/v2.0.5/CWapi-v2.0.5.zip)
+- CWapi 2.0.6 portable: [`CWapi-v2.0.6.zip`](https://github.com/AAAYNMMM/chatgpt-work-api-Releases/releases/download/v2.0.6/CWapi-v2.0.6.zip)
 - 2.x source/docs: [`main`](https://github.com/AAAYNMMM/chatgpt-work-api-Releases/tree/main)
 - 1.6.x source/docs: [`1.6.x`](https://github.com/AAAYNMMM/chatgpt-work-api-Releases/tree/1.6.x)
 

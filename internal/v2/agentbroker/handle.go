@@ -23,6 +23,32 @@ type RequestHandle struct {
 	deadline time.Time
 }
 
+func (h *RequestHandle) Metadata() (string, string, time.Time) {
+	if h == nil || h.broker == nil || h.id == "" {
+		return "", "", time.Time{}
+	}
+	h.broker.mu.Lock()
+	defer h.broker.mu.Unlock()
+	req := h.broker.requests[h.id]
+	if req == nil {
+		return h.id, "", time.Time{}
+	}
+	return req.id, req.model, req.created
+}
+
+func (h *RequestHandle) Stream() <-chan agentprotocol.StreamChunk {
+	if h == nil || h.broker == nil || h.id == "" {
+		return nil
+	}
+	h.broker.mu.Lock()
+	defer h.broker.mu.Unlock()
+	req := h.broker.requests[h.id]
+	if req == nil {
+		return nil
+	}
+	return req.streamCh
+}
+
 func (h *RequestHandle) Wait(ctx context.Context) (RequestResult, error) {
 	if h == nil || h.broker == nil || h.id == "" {
 		return RequestResult{}, errors.New("AGENT_REQUEST_INVALID")

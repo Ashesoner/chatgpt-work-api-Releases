@@ -19,13 +19,21 @@ func EncodeBridgeRequest(conversation Conversation) (map[string]any, error) {
 		case RoleTool:
 			if message.ToolResult != nil {
 				encoded["tool_call_id"] = message.ToolResult.CallID
-				encoded["content"] = message.ToolResult.Content
+				if len(message.ToolResult.Parts) > 0 {
+					encoded["content"] = encodeContentParts(message.ToolResult.Parts)
+				} else {
+					encoded["content"] = message.ToolResult.Content
+				}
 				if message.ToolResult.Name != "" {
 					encoded["name"] = message.ToolResult.Name
 				}
 			}
 		default:
-			encoded["content"] = message.Content
+			if len(message.Parts) > 0 {
+				encoded["content"] = encodeContentParts(message.Parts)
+			} else {
+				encoded["content"] = message.Content
+			}
 			if message.Name != "" {
 				encoded["name"] = message.Name
 			}
@@ -39,7 +47,7 @@ func EncodeBridgeRequest(conversation Conversation) (map[string]any, error) {
 	if len(conversation.Tools) > 0 {
 		tools := make([]any, 0, len(conversation.Tools))
 		for _, tool := range conversation.Tools {
-			function := map[string]any{"name": tool.Name, "parameters": cloneJSONMap(tool.Parameters)}
+			function := map[string]any{"name": tool.Name, "parameters": tool.Parameters}
 			if tool.Description != "" {
 				function["description"] = tool.Description
 			}
@@ -55,17 +63,45 @@ func EncodeBridgeRequest(conversation Conversation) (map[string]any, error) {
 	if conversation.ResponseFormat.Type != "" {
 		format := map[string]any{"type": conversation.ResponseFormat.Type}
 		if conversation.ResponseFormat.Type == "json_schema" {
-			format["json_schema"] = cloneJSONMap(conversation.ResponseFormat.JSONSchema)
+			format["json_schema"] = conversation.ResponseFormat.JSONSchema
 		}
 		result["response_format"] = format
 	}
 	if len(conversation.Metadata) > 0 {
-		result["metadata"] = cloneJSONMap(conversation.Metadata)
+		result["metadata"] = conversation.Metadata
 	}
 	if conversation.Stream {
 		result["stream"] = true
 	}
 	return result, nil
+}
+
+func encodeContentParts(parts []ContentPart) []any {
+	encoded := make([]any, 0, len(parts))
+	for _, part := range parts {
+		switch part.Type {
+		case "text":
+			encoded = append(encoded, map[string]any{"type": "text", "text": part.Text})
+		case "image_ref":
+			encoded = append(encoded, map[string]any{"type": "image_ref", "image_ref": part.ImageRef})
+		}
+	}
+	return encoded
+}
+
+func validateContentParts(parts []ContentPart) error {
+	for _, part := range parts {
+		switch part.Type {
+		case "text":
+		case "image_ref":
+			if strings.TrimSpace(part.ImageRef) == "" {
+				return &CanonicalError{Code: "AGENT_MCP_REQUEST_CONVERSION_FAILED", Kind: ErrorBridge, Detail: "image ref required"}
+			}
+		default:
+			return &CanonicalError{Code: "AGENT_MCP_REQUEST_CONVERSION_FAILED", Kind: ErrorBridge, Detail: "invalid content part"}
+		}
+	}
+	return nil
 }
 
 func validateCanonicalConversation(conversation Conversation) error {
@@ -88,6 +124,14 @@ func validateCanonicalConversation(conversation Conversation) error {
 			}
 		default:
 			return &CanonicalError{Code: "AGENT_MCP_REQUEST_CONVERSION_FAILED", Kind: ErrorBridge, Detail: "invalid message role"}
+		}
+		if err := validateContentParts(message.Parts); err != nil {
+			return err
+		}
+		if message.ToolResult != nil {
+			if err := validateContentParts(message.ToolResult.Parts); err != nil {
+				return err
+			}
 		}
 		for _, call := range message.ToolCalls {
 			if message.Role != RoleAssistant || strings.TrimSpace(call.ID) == "" || strings.TrimSpace(call.Name) == "" {
@@ -175,6 +219,16 @@ func DecodeBridgeCompletion(value map[string]any, request *Conversation) (Comple
 		return Completion{}, &CanonicalError{Code: "AGENT_TOOL_CALL_FINISH_REASON_INVALID", Kind: ErrorWebGPT}
 	}
 	return Completion{Content: normalizedContent, ToolCalls: toolCalls, FinishReason: finishReason, Status: CompletionCompleted}, nil
+}
+
+func ValidateCompletion(completion Completion, request *Conversation) error {
+	if request == nil {
+		return nil
+	}
+	if err := validateCompletionTools(completion.ToolCalls, request.Tools); err != nil {
+		return err
+	}
+	return enforceResponseFormat(request.ResponseFormat, completion.Content)
 }
 
 func validateCompletionTools(calls []ToolCall, tools []ToolDefinition) error {

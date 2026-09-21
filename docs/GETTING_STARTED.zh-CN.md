@@ -1,4 +1,4 @@
-# CWapi 2.0 快速入门
+﻿# CWapi 2.0 快速入门
 
 [English](GETTING_STARTED.md) | [简体中文](GETTING_STARTED.zh-CN.md)
 
@@ -11,11 +11,11 @@ Coding：ChatGPT Web -> Secure MCP Tunnel -> Coding MCP -> 本地 Git workspace
 Agent： 本地 OpenAI-compatible 客户端 -> CWapi /v1 -> Agent MCP -> Secure MCP Tunnel -> ChatGPT Web
 ```
 
-## 1. 下载 CWapi 2.0.5
+## 1. 下载 CWapi 2.0.6
 
 下载正式 Windows portable：
 
-[`CWapi-v2.0.5.zip`](https://github.com/AAAYNMMM/chatgpt-work-api-Releases/releases/download/v2.0.5/CWapi-v2.0.5.zip)
+[`CWapi-v2.0.6.zip`](https://github.com/AAAYNMMM/chatgpt-work-api-Releases/releases/download/v2.0.6/CWapi-v2.0.6.zip)
 
 完整解压到当前 Windows 用户可写目录，然后运行：
 
@@ -123,17 +123,18 @@ CWapi 会把 Tunnel ID 写入 `CWapi-data/config/cwapi.json`，Runtime API key �
 1. 当前 ChatGPT 计划/Workspace 允许你使用 Coding 所需的自定义 MCP 能力；
 2. ChatGPT app 选择的是和 CWapi 一致的 Coding Tunnel；
 3. CWapi 电脑上的 Tunnel 正在运行；
-4. ChatGPT 能发现准确的 5 个 Coding tools：
+4. ChatGPT 能发现准确的 6 个 Coding tools：
 
 ```text
 coding_open
 coding_exec
 coding_status
+coding_attachment
 coding_close
 load_skill
 ```
 
-如果这 5 个工具没出现，先查 [故障排查](TROUBLESHOOTING.zh-CN.md)，不要还没通车就开始研究怎么漂移过弯。
+如果这 6 个工具没出现，先查 [故障排查](TROUBLESHOOTING.zh-CN.md)，不要还没通车就开始研究怎么漂移过弯。
 
 ## 8. 第一次 Coding 测试
 
@@ -169,7 +170,7 @@ coding_open(repository_url, target_ref, expected_commit?, resume=true)
 
 CWapi 复用内部 active session，并返回 `resumed=true`，不会再准备第二份 workspace。
 
-如果同一 repository + target ref 还 active，却用 `resume=false` 再开，会返回 `CODING_WORKSPACE_BUSY`；同仓库其它 branch 可以独立 open。后续 exec/status/close 的 `target_ref` 仅为兼容而可选：只有一个 active branch 时可只传 repository；多个 active branch 时省略返回 `CODING_SESSION_AMBIGUOUS`；指定未 active branch 返回 `CODING_SESSION_NOT_ACTIVE`，不会 fallback。
+如果同一 repository + target ref 还 active，却用 `resume=false` 再开，会返回 `CODING_WORKSPACE_BUSY`；同仓库其它 branch 可以独立 open。后续 exec/status/attachment/close 的 `target_ref` 仅为兼容而可选：只有一个 active branch 时可只传 repository；多个 active branch 时省略返回 `CODING_SESSION_AMBIGUOUS`；指定未 active branch 返回 `CODING_SESSION_NOT_ACTIVE`，不会 fallback。
 
 ### 同仓库两个 branch 并行
 
@@ -178,6 +179,7 @@ coding_open(repository_url=<repo>, target_ref="branch-a")
 coding_open(repository_url=<repo>, target_ref="branch-b")
 coding_exec(repository_url=<repo>, target_ref="branch-a", ...)
 coding_status(repository_url=<repo>, target_ref="branch-b")
+coding_attachment(repository_url=<repo>, target_ref="branch-a", paths=["screenshots/ui.png"])
 coding_close(repository_url=<repo>, target_ref="branch-a")
 ```
 
@@ -269,9 +271,9 @@ CWapi 给本地软件返回 Chat Completions response
 - **429**：有界 queue 已忙；
 - **504**：Web GPT 没在默认 180 秒 request timeout 内完成请求。
 
-## 14. 文件与媒体不经过这两条 MCP 链路传输
+## 14. 文件与图片
 
-Coding MCP 没有文件/图片传输工具。Agent 只接受文本与 tool JSON：顶层 `attachments` 返回 `AGENT_FILE_ATTACHMENTS_UNSUPPORTED`，`image_url` 等任何非文本 message content part 返回 `AGENT_MEDIA_INPUT_UNSUPPORTED`。
+普通文件传输仍关闭。Coding 可通过 `coding_attachment(repository_url, target_ref?, paths)` 返回选中 branch workspace 的受限栅格图片并保持原始 bytes/MIME；Agent 支持 `data:` `image_url` 或 CWapi inline image attachment 中的受限栅格图片。远程图片 URL、SVG 和普通文件仍不支持。
 
 上传到 ChatGPT 对话里的文件不会被自动复制到 Coding workspace 或 Agent 本地软件。
 

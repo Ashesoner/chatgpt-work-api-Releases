@@ -1,8 +1,8 @@
-# CWapi 2.0.5 Operations
+# CWapi 2.0.6 Operations
 
 ## Start
 
-Extract the portable to any user-writable directory and run `CWapi.exe`. No Go, Node, Git or Wails installation is required. The first launch creates `CWapi-data/config/cwapi.json` and starts the loopback MCP listener plus the Agent Provider when enabled. 2.0.5 also loads the global `prompts/` directory once at startup; prompt/rule/skill edits require restarting CWapi. Each bundled OpenAI Secure MCP Tunnel starts only after its own configuration is complete.
+Extract the portable to any user-writable directory and run `CWapi.exe`. No Go, Node, Git or Wails installation is required. The first launch creates `CWapi-data/config/cwapi.json` and starts the loopback MCP listener plus the Agent Provider when enabled. 2.0.6 also loads the global `prompts/` directory once at startup; prompt/rule/skill edits require restarting CWapi. Each bundled OpenAI Secure MCP Tunnel starts only after its own configuration is complete.
 
 Coding uses the bundled Codex app-server only for model-free `command/exec` and creates a private empty CODEX_HOME per command. No Codex login is needed. SAFE does not inherit the host Git/GitHub setup. FULL uses the current user's sanitized development environment. GitHub CLI state is shared by all Coding workspaces at `CWapi-data/auth/github`; authenticate once with `gh auth login` and keep token storage in Windows Credential Manager/keyring where supported.
 
@@ -42,11 +42,14 @@ Model:    cwapi-web-gpt
 
 ## Images and files
 
-CWapi 2.0.5 does not provide file or image transfer.
+CWapi 2.0.6 provides image-only transfer; generic file transfer remains disabled.
 
-For Coding, read source, Markdown, JSON, logs and other inspectable text through bounded `coding_exec`; there is no attachment tool.
+For Coding, use `coding_attachment(repository_url, target_ref?, paths)` only for bounded raster images inside the selected active workspace; it follows the same branch selector rules as exec/status/close; it returns native MCP `ImageContent` with original bytes/MIME and performs no recompression, resize, transcode or OCR. Read source, Markdown, JSON, logs and other inspectable text through bounded `coding_exec`.
 
-For Agent, top-level `attachments` requests return `AGENT_FILE_ATTACHMENTS_UNSUPPORTED`, while non-text message content parts such as `image_url` return `AGENT_MEDIA_INPUT_UNSUPPORTED`. `agent_exchange` carries request JSON only and emits no MCP file/image content.
+For Agent, standard `image_url` data URIs and image-only CWapi top-level `attachments` are accepted in user/tool-result content. The Adapter creates exact `image_ref` bindings in one parse; `agent_exchange` emits matching native MCP `ImageContent` with original bytes/MIME. Generic files return `AGENT_IMAGE_ATTACHMENT_REQUIRED`, remote URLs return `AGENT_IMAGE_URL_UNSUPPORTED`, and broker-wide raw-image residency is capped at 64 MiB.
+
+
+Agent liveness uses three separate clocks: heartbeat renews only the bridge lease; delivery/progress/stream/response renew request activity; a hard request lifetime never extends. For `stream=true`, use `stream_chunks` for incremental SSE and still submit one final structured response matching the emitted chunks.
 
 For long Agent workflows, local software may add bounded top-level `metadata` strings such as `task_id` and `correlation_id`. These are surfaced on each MCP request and remain separate from the random OpenAI `request_id` and any local command session. Web GPT should read exchange `activity` for broker truth. `no_request` means only that no new OpenAI request arrived during the wait window; inspect the actual local process/artifact before waiting again.
 
@@ -86,8 +89,8 @@ Before replacing 2.0.5 with branch-aware V1, close active sessions, exit CWapi, 
 - remote Git/network command fails: enable Coding network access, then retry；
 - force/delete push fails with `REMOTE_GIT_REWRITE_DISABLED`: enable the advanced Remote Git Rewrite capability only when that exact remote history change is intended；
 - persistent command returns a terminal state: stop polling that process ID and advance the task；
-- `AGENT_FILE_ATTACHMENTS_UNSUPPORTED`: local Agent software attempted file transfer; file transfer is disabled；
-- `AGENT_MEDIA_INPUT_UNSUPPORTED`: local Agent software attempted image or other non-text message content; media transfer is disabled；
+- `AGENT_IMAGE_ATTACHMENT_REQUIRED`: a top-level Agent attachment was not a supported raster image；
+- `AGENT_IMAGE_URL_UNSUPPORTED`: an Agent `image_url` was not an inline `data:` URI；
 - Agent 503: open Agent MCP bridge；
 - Agent 429: wait for pending/claimed work to finish；
 - Agent 504: Web GPT did not answer before request timeout；

@@ -1,4 +1,4 @@
-# CWapi 2.0.5 Security
+# CWapi 2.0.6 Security
 
 ## Trust boundaries
 
@@ -26,7 +26,7 @@ SAFE/FULL are the complete Coding access profiles; CWapi issues no reusable elev
 
 The Coding MCP public surface uses `repository_url` as stable identity and does not expose the random internal session ID. CWapi still keeps that internal ID and exact repository ownership mapping for cancellation, close races and stale-operation protection.
 
-Coding MCP has no file or image transfer tool and emits no MCP file/resource/image content. Workspace text needed by Web GPT is read through bounded `coding_exec` output.
+Coding MCP exposes image-only `coding_attachment`. It reads only bounded raster images inside the selected active workspace, using the same optional target-ref routing rules as the other branch-aware Coding tools, rejects traversal/Git metadata/non-image inputs, and emits native `ImageContent` with original bytes/MIME. Ordinary files are not emitted as MCP resources; workspace text is read through bounded `coding_exec` output.
 
 Workspace maintenance resolves targets under the managed root and is available only from the local Desktop confirmation flow.
 
@@ -39,13 +39,13 @@ CWapi-owned GitHub CLI identity uses `CWapi-data/auth/github` for every Coding w
 - internal bridge IDs remain random and generation-scoped; public `request_id` remains random and exact-correlated；
 - `request_id` is transaction-only and is never promoted to third-party command/session identity；optional `metadata.task_id` / `metadata.correlation_id` is bounded and client-supplied；
 - request timeout/disconnect terminalize request state；bridge close/stale detaches active requests for same-ID resume rather than deleting them；
-- runtime-owned heartbeat maintains active request liveness independently from natural-language model output；
+- runtime-owned heartbeat maintains bridge liveness only；request activity requires delivery/progress/stream/response and is capped by a non-extendable hard lifetime；
 - retryable tool-call decode/mapping errors expose structured request/tool identity and remain recoverable；
 - malformed messages/tools/responses are rejected before delivery；
 - exchange activity reports only broker revision and queue truth；`no_request` never asserts external process state；
-- top-level `attachments` is rejected with `AGENT_FILE_ATTACHMENTS_UNSUPPORTED`；
-- any non-text message content part, including `image_url`, is rejected with `AGENT_MEDIA_INPUT_UNSUPPORTED` before broker admission；
-- Agent emits no MCP file/resource/image content and ChatGPT conversation uploads are not imported into local software；
+- top-level CWapi `attachments` accepts only bounded inline raster images; non-image items return `AGENT_IMAGE_ATTACHMENT_REQUIRED`；
+- `image_url` accepts only bounded `data:` raster images; remote URLs return `AGENT_IMAGE_URL_UNSUPPORTED` and other unsupported non-text parts remain rejected；
+- Agent MCP emits native `ImageContent` only for validated raster images with exact `image_ref` binding, never generic-file `EmbeddedResource`; raw image bytes are request-scoped under a 64 MiB broker-wide budget and ChatGPT conversation uploads are not imported into local software；
 - normal observability stores metadata only, not full conversation payloads。
 
 Server Instructions may guide workflow and efficiency, but they are not a security boundary. Authorization, input validation, request correlation, duplicate handling and terminal-state rules remain enforced by Go code.

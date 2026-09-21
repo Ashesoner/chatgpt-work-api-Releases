@@ -141,7 +141,7 @@ coding_open(..., resume=true)
 CODING_WORKSPACE_BUSY
 ```
 
-这是同分支保护机制。同一仓库的另一个 branch 可以并行 open。`coding_exec` / `coding_status` / `coding_close` 的 `target_ref` 只为兼容而可选：恰好一个 active branch 时可省略；多个 active branch 省略返回 `CODING_SESSION_AMBIGUOUS`；显式指定未 active branch 返回 `CODING_SESSION_NOT_ACTIVE`，不会 fallback。
+这是同分支保护机制。同一仓库的另一个 branch 可以并行 open。`coding_exec` / `coding_status` / `coding_attachment` / `coding_close` 的 `target_ref` 只为兼容而可选：恰好一个 active branch 时可省略；多个 active branch 省略返回 `CODING_SESSION_AMBIGUOUS`；显式指定未 active branch 返回 `CODING_SESSION_NOT_ACTIVE`，不会 fallback。
 
 ## 升级 CWapi 会删除 workspace 吗？
 
@@ -163,11 +163,11 @@ Coding 页打开“管理工作区”。每项显示 repository + branch，并�
 
 ## Coding MCP 能传文件或图片吗？
 
-不能。正式 Coding catalog 只有 `coding_open`、`coding_exec`、`coding_status`、`coding_close`。源码、Markdown、JSON、日志等文本可用有界 `coding_exec` 读取；Coding MCP 不产生 `ImageContent` 或 `EmbeddedResource`。
+栅格图片可以，普通文件不行。Coding catalog 包含 `coding_attachment(repository_url, target_ref?, paths)`，它从选中的 active workspace 读取受限栅格图片，并与 exec/status/close 使用相同的 branch 选择规则，并以原生 `ImageContent` 返回原始 bytes/MIME。源码、Markdown、JSON、日志等文本仍通过有界 `coding_exec` 读取；普通文件不会生成 `EmbeddedResource`。
 
 ## Agent 能接收文件或图片吗？
 
-不能。Agent 只接受文本与 tool JSON。顶层 `attachments` 返回 `AGENT_FILE_ATTACHMENTS_UNSUPPORTED`；`image_url` 等任何非文本 message content part 都会在进入 broker 前返回 `AGENT_MEDIA_INPUT_UNSUPPORTED`。
+栅格图片可以，普通文件不行。Agent 支持 `data:` `image_url` 和 CWapi inline image attachment 中的栅格图片；远程图片 URL、SVG、PDF、压缩包、Office 文件等普通文件仍不支持。
 
 ## 在 ChatGPT 对话里上传文件，会自动进入本地 workspace 或 Agent 客户端吗？
 

@@ -28,6 +28,6 @@
 
 ## Change control
 
-2.0.5 retains schema `cwapi.config.v3`. A strict valid 2.0.4 config is migrated atomically while preserving existing user settings, including Remote Git Rewrite; unrelated schema/version mismatches remain rejected.
+2.0.6 retains schema `cwapi.config.v3`. A strict valid 2.0.4 or 2.0.5 config is migrated atomically while preserving existing user settings, including Remote Git Rewrite; unrelated schema/version mismatches remain rejected.
 
 Routine development may create commits and test-only `refs/heads/cwapi-e2e/*` branches when a guarded E2E explicitly requires them. Merge to `main`, tag, Release, force-push and remote test-ref deletion require explicit user authorization.
