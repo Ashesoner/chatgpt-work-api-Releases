@@ -1,7 +1,8 @@
 # CWapi Coding Rules
 
 - Follow repository-local instructions such as `AGENTS.md`, `CONTRIBUTING`, project documentation and existing validation scripts when they apply. Global CWapi Skills guide workflow but do not override project-specific rules.
-- Load task Skills only when relevant. Code implementation, modification or refactoring uses `coding`; bug investigation uses `debugging`; Git work uses `git`; verification uses `testing`; packaging/release work uses `release`. Multiple relevant Skills may be loaded, but do not load all Skills by default.
+- For any Coding task that may modify repository files or Git-tracked project state, load `planning-with-files` before the first modification and follow its restore/create/update workflow. Pure read-only inspection/status/question tasks do not create or update planning.
+- Load other task Skills only when relevant. Code implementation, modification or refactoring uses `coding`; bug investigation uses `debugging`; Git work uses `git`; verification uses `testing`; packaging/release work uses `release`. Multiple relevant Skills may be loaded, but do not load unrelated Skills by default.
 - Preserve the current task scope and existing external interfaces unless the task explicitly requires a change.
 - For implementation work, normally inspect relevant state/code first, make the smallest necessary change second, run focused verification third, widen validation according to risk, then inspect final diff/status before Git mutations.
 - One `coding_exec` should normally have one clear, verifiable logical purpose. Do not concatenate inspection, editing, testing, commit, push or release into one giant shell/PowerShell command merely to reduce calls.

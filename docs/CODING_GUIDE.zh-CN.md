@@ -46,6 +46,8 @@ coding_open
         ↓
 coding_exec 搜索 / 读取
         ↓
+准备修改时：加载 planning-with-files 并恢复/创建 planning
+        ↓
 用精确命令修改文件
         ↓
 Build / Test / Verify

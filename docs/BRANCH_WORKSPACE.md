@@ -304,16 +304,22 @@ For `coding_attachment`, the fork applies the same optional `target_ref` selecto
 
 Executable validation on 2026-09-20 confirmed the refreshed ChatGPT Coding tool catalog, existing V1 workspace resume, persistent-process stdout cursor behavior, raster attachment success and non-image/`.git` rejection, close/reopen resume state, GUI/Tunnel migration, full Go tests, frontend production build, and staged diff checks. Same-repository dual-branch routing and same-branch concurrent-operation executable probes were not rerun at user request because their source/unit regression coverage is retained. Agent bridge open/exchange/close smoke testing passed; no local client request was injected, so this is not recorded as a full Agent end-to-end request test.
 
-## 16. Deferred next-version planning continuity
+## 16. Planning continuity follow-up
 
-This is a post-2.0.6 follow-up and is not implemented by the current integration.
+The follow-up development line `feature/planning-with-files-v2` implements the previously deferred planning continuity policy on top of V2 without changing the branch-aware workspace/session locking contract.
 
-Planned behavior:
+Implemented behavior:
 
-- every branch workspace uses one default planning set: `.planning/task_plan.md`, `.planning/findings.md`, and `.planning/progress.md`;
-- the planning files are initially treated as normal repository files and may be committed with that branch; Local-only / dual-storage policy is deferred until broader Skill interoperability requires it;
-- multiple ChatGPT conversations may resume and use the same repository + branch over time, but the existing Coding service remains authoritative for execution exclusion: while one foreground Coding operation is active, another operation on that same workspace is rejected with `CODING_COMMAND_ACTIVE`;
-- before a conversation resumes modification after another conversation may have progressed the branch, it must reread the planning files and refresh `coding_status` so stale conversational context does not override current repository truth;
-- `PLAN_ID` is not part of the default CWapi model; one branch has one active planning set unless a future requirement proves otherwise;
-- the implementation should, where practical, recognize and continue projects already prepared by Codex using the upstream `planning-with-files` Skill instead of forcing a second CWapi-specific planning format; if robust compatibility is disproportionately complex, it may be deferred rather than weakening safety;
-- a Skill-management GUI may later expose installed/default Skills and planning status, but it is lower priority than reliable planning persistence and resume behavior.
+- repository-modifying Coding tasks load the bundled `planning-with-files` Skill before the first modification; pure read-only tasks do not create planning files;
+- every branch normally uses one Git-trackable planning set at `.planning/task_plan.md`, `.planning/findings.md`, and `.planning/progress.md`;
+- existing upstream/Codex root-level planning files or a single unambiguous named `.planning/<id>/` plan are reused in place instead of creating a duplicate CWapi plan; multiple candidates fail closed and require user selection;
+- the existing Coding service remains authoritative for same-workspace operation exclusion; after resume or contention, the next modifying conversation rereads planning plus current Git truth before editing;
+- `PLAN_ID` is not part of the default CWapi workflow; one branch has one current planning set;
+- planning files remain ordinary repository files in this version and are not silently moved to `CWapi-data` or ignored by Git.
+
+Still deferred:
+
+- Skill-management GUI;
+- Local-only / Track-in-repository storage policy switching or dual storage;
+- complete Agent Skills / Codex directory-package loading (`SKILL.md`, scripts, references, agents metadata);
+- default multi-plan / multi-`PLAN_ID` workflows.

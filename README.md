@@ -112,6 +112,7 @@ The two lines are not configuration-compatible. Read the [Version Guide](docs/VE
 - Run different branches of the same repository concurrently with branch-aware workspaces; resume the same repository + branch from a new ChatGPT conversation with compatible `coding_open(..., resume=true)`.
 - `coding_exec` / `coding_status` / `coding_attachment` / `coding_close` accept optional `target_ref`: repository-only calls stay compatible with one active branch, multiple active branches require a target and otherwise return `CODING_SESSION_AMBIGUOUS`; an inactive named target returns `CODING_SESSION_NOT_ACTIVE` without fallback.
 - Load startup-cached shared task Skills on demand with `load_skill(name)`; Core/Rules/Skill changes take effect after restarting CWapi.
+- For repository-modifying Coding work, use the bundled `planning-with-files` Skill by default: restore or create one Git-tracked planning set for the current branch, then keep goal/findings/progress synchronized with current Git truth. Read-only tasks do not create planning files. See [Planning With Files](docs/PLANNING_WITH_FILES.md).
 - Keep source and inspectable text in the command path; `coding_attachment` transfers only bounded raster images from the selected active workspace without recompression, resizing, transcoding, or OCR; it follows the same optional `target_ref` routing rules as exec/status/close.
 
 ### Agent capabilities

@@ -46,6 +46,8 @@ Inspect repository and relevant source
         ↓
 coding_exec for search/read
         ↓
+For modifying work: load planning-with-files and restore/create planning
+        ↓
 Edit files through exact commands
         ↓
 Build / test / verify

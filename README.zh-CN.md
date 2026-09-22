@@ -112,6 +112,7 @@ Cline、Roo Code 等允许自定义 OpenAI-compatible provider 的客户端**可
 - 同一 repository 的不同 branch 可使用 branch-aware workspace 并行 active；新 ChatGPT 对话通过兼容的 `coding_open(..., resume=true)` 继续同一 repository + branch。
 - `coding_exec` / `coding_status` / `coding_attachment` / `coding_close` 的 `target_ref` 可选：只有一个 active branch 时保留 repository-only 兼容；多个 active branch 不传 target 时返回 `CODING_SESSION_AMBIGUOUS`；指定未 active target 返回 `CODING_SESSION_NOT_ACTIVE`，不 fallback。
 - 通过 `load_skill(name)` 按需加载启动时缓存的共享任务 Skill；修改 Core/Rules/Skill 后需要重启 CWapi。
+- 对会修改仓库的 Coding 任务，默认使用内置 `planning-with-files` Skill：为当前 branch 恢复或创建一套可随 Git 跟踪的 planning，并让目标/发现/进度与真实 Git 状态保持一致；纯只读任务不会创建 planning。详见 [Planning With Files](docs/PLANNING_WITH_FILES.md)。
 - 源码和其它可检查文本保持在命令链路中；`coding_attachment` 只从选中的 active workspace 传输受限栅格图片，不压缩、不缩放、不转码、不 OCR；它与 exec/status/close 使用相同的可选 `target_ref` 路由规则。
 
 ### Agent

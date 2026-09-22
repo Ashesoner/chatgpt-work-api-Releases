@@ -4,7 +4,7 @@
 
 2.0.6 将 first-contact prompt 分成全局文件，而不是把大量经验硬编码进 Go 常量。CWapi 启动时扫描并缓存一次 `prompts/`：Coding 与 Agent 各有独立 Core/Rules，共享 Skills。MCP initialize 的 `instructions` 只拼接当前 mode 的 Core + Rules + Skill 清单（ID/name/Description），Skill body 由 `load_skill(name)` 按 Rules 需要加载。
 
-Core 只描述通信协议与工具使用；Rules 描述 mode-specific 行为和 Skill routing；Skills 保存 coding/debugging/git/testing/release 等任务经验。修改 Rules/Skills/Core 后必须重启 CWapi。没有 workspace-specific Skill、Profile、热加载、数据库或 GUI 管理。
+Core 只描述通信协议与工具使用；Rules 描述 mode-specific 行为和 Skill routing；Skills 保存 planning-with-files/coding/debugging/git/testing/release 等任务经验。修改 Rules/Skills/Core 后必须重启 CWapi。没有 workspace-specific Skill、Profile、热加载、数据库或 GUI 管理。
 
 单个 Skill 损坏时跳过并记录 warning；对应 enabled mode 的 Core/Rules 缺失或不可读时，该 mode 启动明确失败。协议正确性、授权、request correlation 和安全边界仍由 Go code 强制执行。
 
@@ -28,6 +28,8 @@ A typical turn is:
 3. inspect HEAD/dirty/divergence with `coding_status(repository_url,target_ref?)` when Git truth is needed；
 4. inspect raster output with `coding_attachment(repository_url,target_ref?,paths)` when visual artifacts matter；
 5. `coding_close(repository_url,target_ref?)` when the task is genuinely finished。
+
+对准备修改仓库的 Coding 任务，Rules 要求在第一次修改前加载 `planning-with-files`。它优先使用 `.planning/task_plan.md`、`.planning/findings.md`、`.planning/progress.md`；已有 upstream/Codex root 三文件或唯一 named plan 时原地复用，避免创建第二套状态。纯只读任务不会因此把 workspace 变 dirty。详细规则见 [PLANNING_WITH_FILES.md](PLANNING_WITH_FILES.md)。
 
 The Coding GPT is the only reasoning agent. CWapi sends exact commands to the bundled private Codex app-server `command/exec` development tool; it never sends an instruction to a Codex agent. Pass arguments as an argv array, not as one shell-quoted command string. In SAFE, prefer PowerShell cmdlets and repository tools that work under Windows constrained language mode.
 
