@@ -67,6 +67,9 @@ func TestDeleteAtIsBranchScoped(t *testing.T) {
 		if err := os.MkdirAll(runtimeRoot, 0o700); err != nil {
 			t.Fatal(err)
 		}
+		if err := os.WriteFile(filepath.Join(runtimeRoot, "sandbox-identity.json"), []byte("test-identity"), 0o600); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	if err := DeleteAt(dataRoot, "ashesoner/repo", "refs/heads/branch-a"); err != nil {

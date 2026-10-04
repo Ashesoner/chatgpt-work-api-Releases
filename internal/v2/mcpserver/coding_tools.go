@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/AAAYNMMM/CWapi/internal/executiondiag"
 	"github.com/AAAYNMMM/CWapi/internal/v2/attachments"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -51,18 +52,19 @@ type CodingExecInput struct {
 }
 
 type CodingExecOutput struct {
-	State           string `json:"state"`
-	ProcessID       string `json:"process_id,omitempty"`
-	PID             int    `json:"pid,omitempty"`
-	StartedAt       string `json:"started_at,omitempty"`
-	ExitCode        int    `json:"exit_code"`
-	Stdout          string `json:"stdout,omitempty"`
-	Stderr          string `json:"stderr,omitempty"`
-	StdoutCursor    int64  `json:"stdout_cursor,omitempty"`
-	StderrCursor    int64  `json:"stderr_cursor,omitempty"`
-	StdoutTruncated bool   `json:"stdout_truncated,omitempty"`
-	StderrTruncated bool   `json:"stderr_truncated,omitempty"`
-	Truncated       bool   `json:"truncated,omitempty"`
+	Diagnostics     *executiondiag.Snapshot `json:"diagnostics,omitempty"`
+	State           string                  `json:"state"`
+	ProcessID       string                  `json:"process_id,omitempty"`
+	PID             int                     `json:"pid,omitempty"`
+	StartedAt       string                  `json:"started_at,omitempty"`
+	ExitCode        int                     `json:"exit_code"`
+	Stdout          string                  `json:"stdout,omitempty"`
+	Stderr          string                  `json:"stderr,omitempty"`
+	StdoutCursor    int64                   `json:"stdout_cursor,omitempty"`
+	StderrCursor    int64                   `json:"stderr_cursor,omitempty"`
+	StdoutTruncated bool                    `json:"stdout_truncated,omitempty"`
+	StderrTruncated bool                    `json:"stderr_truncated,omitempty"`
+	Truncated       bool                    `json:"truncated,omitempty"`
 }
 
 type CodingStatusInput struct {
@@ -80,6 +82,7 @@ type CodingProcessSummary struct {
 }
 
 type CodingStatusOutput struct {
+	LastExecution        *executiondiag.Outcome `json:"last_execution,omitempty"`
 	State                string                 `json:"state"`
 	Repository           string                 `json:"repository,omitempty"`
 	TargetRef            string                 `json:"target_ref,omitempty"`

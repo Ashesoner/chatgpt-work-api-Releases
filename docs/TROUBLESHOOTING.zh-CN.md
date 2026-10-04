@@ -403,3 +403,19 @@ CWapi-data/workspaces/
 只收集真正相关的信息：错误码、CWapi/Tunnel 当前状态、适用时的 `coding_status`，以及 Agent 本地 HTTP status。不要公开 MCP token、Agent API key、Tunnel Runtime API key 或 private repository credential。
 
 同时可参考 [常见问题](FAQ.zh-CN.md)、[Coding 指南](CODING_GUIDE.zh-CN.md)、[Agent 指南](AGENT_GUIDE.zh-CN.md) 和 [Operations](OPERATIONS.md)。
+# Windows SAFE 中 ready 但 echo 超时
+
+`coding_status.state=ready` 只表示没有前台操作占用。请同时检查
+`last_execution.error` 和 `last_execution.diagnostics`。GUI 会显示最近的执行错误和阶段。
+`phase=command_exec` 包括沙箱启动与目标执行；`target_start=unknown` 时不能仅凭超时断言命令未启动。
+
+旧版本每条命令更换 capability SID，可能在 repo/cache 中积累 Windows ACL。
+修复版保持 workspace 的 capability 身份，同时继续使用独立 command home。
+`WINDOWS_WORKSPACE_ACL_LARGE` 是根目录 ACL 条目达到 256 的提示，不是文件数量限制或禁止执行规则。
+忽略的依赖文件仍参与物理目录的 ACL 继承，首次授权大型目录也可能较慢。
+
+修复不会自动清除旧 ACL。不要批量删除未知 SID 或重置整个权限树；需要迁移时先保存未提交内容、ignored 文件和本地提交，再验证新 workspace。
+SAFE 隔离 HOME/LOCALAPPDATA；把 SDK 移到用户 LOCALAPPDATA 并不自动保证 SAFE 构建可用。
+
+超时、close 或 shutdown 报进程回收错误时，目录释放尚未确认。缩小到托盘不等于退出。
+完整机制和测试方法见 [Windows SAFE execution](SAFE_WINDOWS_EXECUTION.md)。

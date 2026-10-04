@@ -33,7 +33,7 @@ type Snapshot = {
   codex_network_access?: boolean;
   codex_remote_git_rewrite?: boolean;
   codex?: { state?: string; executable?: string; last_error?: string };
-  coding?: { state?: string; active?: number; repositories?: string[] };
+  coding?: { state?: string; active?: number; repositories?: string[]; last_execution?: { state?: string; error?: string; diagnostics?: { access_profile?: string; warnings?: string[]; phases?: { name: string; state: string }[] } } };
   workspaces?: { repository_count?: number; repositories?: string[]; workspaces?: WorkspaceEntry[]; invalid_entries?: number };
   agent_enabled?: boolean;
   agent_provider?: { state?: string; address?: string; last_error?: string };
@@ -75,11 +75,26 @@ function snapshotIssue(page: Page, snapshot: Snapshot, tunnel: TunnelInfo) {
   if (snapshot.mcp?.state === "failed") candidates.push(snapshot.mcp.error);
   if (snapshot.state === "failed") candidates.push(snapshot.last_error);
   if (page === "coding" && ["failed", "unavailable"].includes(snapshot.codex?.state || "")) candidates.push(snapshot.codex?.last_error);
+  if (page === "coding" && snapshot.coding?.last_execution?.state === "failed") candidates.push(snapshot.coding.last_execution.error);
+  if (page === "coding") candidates.push(snapshot.coding?.last_execution?.diagnostics?.warnings?.[0]);
   if (page === "agent") {
     if (snapshot.agent_provider?.state === "failed") candidates.push(snapshot.agent_provider.last_error);
     if (snapshot.agent_enabled && snapshot.agent?.bridge_state === "OFFLINE") candidates.push(snapshot.agent.last_error);
   }
   return candidates.map(errorCode).find(Boolean) || "";
+}
+
+function executionFailurePhase(snapshot: Snapshot) {
+  const outcome = snapshot.coding?.last_execution;
+	if (outcome?.diagnostics?.warnings?.includes("WINDOWS_WORKSPACE_ACL_LARGE") && outcome.state !== "failed") return "SAFE · 工作区权限规则较多";
+  if (outcome?.state !== "failed") return "";
+  const phase = [...(outcome.diagnostics?.phases || [])].reverse().find((item) => item.state === "failed")?.name;
+  const labels: Record<string, string> = {
+    prepare_runtime: "准备执行环境", resolve: "解析命令", security_check: "安全检查", git_safety: "Git 安全检查",
+    environment: "配置执行环境", sandbox_identity: "沙箱身份", app_server_start: "命令宿主启动",
+    sandbox_readiness: "沙箱就绪检查", sandbox_setup: "沙箱设置", command_exec: "命令启动或执行", command_cleanup: "进程回收",
+  };
+  return phase ? `${outcome.diagnostics?.access_profile?.toUpperCase() || "Coding"} · ${labels[phase] || phase}` : "";
 }
 
 function statusClass(value?: string) {
@@ -341,7 +356,7 @@ export default function App() {
         )}
       </div>
 
-      {issue && <div className="current-error" role="alert"><span>当前错误</span><code>{issue}</code></div>}
+      {issue && <div className="current-error" role="alert"><span>{page === "coding" ? executionFailurePhase(snapshot) || "当前错误" : "当前错误"}</span><code>{issue}</code></div>}
       <footer>Coding 与 Agent 相互独立，分别在对应页面配置和管理。</footer>
 
       {workspaceManagerOpen && (

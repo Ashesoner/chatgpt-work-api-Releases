@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/AAAYNMMM/CWapi/internal/executiondiag"
 	"github.com/AAAYNMMM/CWapi/internal/repository"
 	"github.com/AAAYNMMM/CWapi/internal/v2/attachments"
 	"github.com/AAAYNMMM/CWapi/internal/v2/codextoolhost"
@@ -73,6 +74,7 @@ type record struct {
 	activeAction    string
 	activeCommand   string
 	activeStartedAt time.Time
+	lastExecution   *executiondiag.Outcome
 	cancel          context.CancelFunc
 	done            chan struct{}
 }
@@ -388,6 +390,23 @@ func (s *Service) Exec(ctx context.Context, input mcpserver.CodingExecInput) (mc
 	// Release foreground operation ownership as soon as the local executor has
 	// reached a terminal return. The deferred call remains as a panic/early-exit
 	// safety net, and beginOperation makes finish idempotent.
+	if action == "run" || action == "start" {
+		outcome := &executiondiag.Outcome{State: result.State, At: time.Now().UTC().Format(time.RFC3339Nano), Diagnostics: result.Diagnostics}
+		if err != nil {
+			outcome.State, outcome.Error = "failed", err.Error()
+		} else if result.State == "failed" {
+			outcome.Error = fmt.Sprintf("COMMAND_EXIT_NONZERO: exit_code=%d", result.ExitCode)
+			if result.ExitCode == -1 {
+				outcome.Error = result.Stderr
+			}
+		}
+		if len(outcome.Error) > 2048 {
+			outcome.Error = outcome.Error[:2048]
+		}
+		record.mu.Lock()
+		record.lastExecution = outcome
+		record.mu.Unlock()
+	}
 	finish()
 	if err != nil {
 		return mcpserver.CodingExecOutput{}, err
@@ -396,7 +415,8 @@ func (s *Service) Exec(ctx context.Context, input mcpserver.CodingExecInput) (mc
 		_, _ = s.refreshRecord(ctx, record)
 	}
 	return mcpserver.CodingExecOutput{
-		State: result.State, ProcessID: result.ProcessID, PID: result.PID, StartedAt: result.StartedAt, ExitCode: result.ExitCode,
+		Diagnostics: result.Diagnostics,
+		State:       result.State, ProcessID: result.ProcessID, PID: result.PID, StartedAt: result.StartedAt, ExitCode: result.ExitCode,
 		Stdout: result.Stdout, Stderr: result.Stderr, StdoutCursor: result.StdoutCursor, StderrCursor: result.StderrCursor,
 		StdoutTruncated: result.StdoutTruncated, StderrTruncated: result.StderrTruncated, Truncated: result.Truncated,
 	}, nil
@@ -489,9 +509,13 @@ func (s *Service) Status(ctx context.Context, input mcpserver.CodingStatusInput)
 		state = "busy"
 	}
 	output := mcpserver.CodingStatusOutput{
-		State: state, Repository: record.repository, TargetRef: record.targetRef, ResolvedCommit: record.resolvedCommit,
+		LastExecution: record.lastExecution,
+		State:         state, Repository: record.repository, TargetRef: record.targetRef, ResolvedCommit: record.resolvedCommit,
 		CurrentHead: record.currentHead, CurrentBranch: record.currentBranch, Detached: record.detached,
 		TrackingHead: record.trackingHead, TrackedDirty: record.trackedDirty, Divergence: record.divergence,
+	}
+	if output.LastExecution == nil {
+		output.LastExecution = &executiondiag.Outcome{State: "unverified"}
 	}
 	path := record.path
 	record.mu.Unlock()

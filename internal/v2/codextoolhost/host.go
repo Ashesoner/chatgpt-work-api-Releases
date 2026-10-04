@@ -16,6 +16,7 @@ import (
 
 	"github.com/AAAYNMMM/CWapi/internal/childenv"
 	"github.com/AAAYNMMM/CWapi/internal/codex"
+	"github.com/AAAYNMMM/CWapi/internal/executiondiag"
 	"github.com/AAAYNMMM/CWapi/internal/invocation"
 	"github.com/AAAYNMMM/CWapi/internal/processcontract"
 	"github.com/AAAYNMMM/CWapi/internal/security"
@@ -67,6 +68,7 @@ type ExecInput struct {
 }
 
 type ExecResult struct {
+	Diagnostics     *executiondiag.Snapshot
 	State           string
 	ProcessID       string
 	PID             int
@@ -105,6 +107,7 @@ type persistentProcess struct {
 	runtime       *security.CommandRuntime
 	done          chan struct{}
 	stopRequested bool
+	trace         *executiondiag.Trace
 	stdoutDir     string
 	stderrDir     string
 	stdoutArchive commandproxy.ReadResult
@@ -220,7 +223,15 @@ func (h *Host) Exec(ctx context.Context, workspaceRoot string, input ExecInput) 
 	}
 }
 
-func (h *Host) execute(ctx context.Context, workspaceRoot string, input ExecInput, persistent bool) (ExecResult, error) {
+func (h *Host) execute(ctx context.Context, workspaceRoot string, input ExecInput, persistent bool) (output ExecResult, execErr error) {
+	profile, networkAccess, remoteGitRewrite := h.currentPolicy()
+	ctx, trace := executiondiag.New(ctx, profile)
+	defer func() {
+		output.Diagnostics = trace.Snapshot()
+		if execErr != nil {
+			execErr = fmt.Errorf("%w [phase=%s profile=%s elapsed_ms=%d target_start=unknown]", execErr, output.Diagnostics.Boundary(), profile, output.Diagnostics.ElapsedMS)
+		}
+	}()
 	if persistent && input.TimeoutSeconds != 0 {
 		return ExecResult{}, errors.New("CODING_PERSISTENT_TIMEOUT_UNSUPPORTED")
 	}
@@ -228,7 +239,6 @@ func (h *Host) execute(ctx context.Context, workspaceRoot string, input ExecInpu
 	if err != nil {
 		return ExecResult{}, err
 	}
-	profile, networkAccess, remoteGitRewrite := h.currentPolicy()
 	processID, err := randomProcessID()
 	if err != nil {
 		return ExecResult{}, err
@@ -252,7 +262,9 @@ func (h *Host) execute(ctx context.Context, workspaceRoot string, input ExecInpu
 			return ExecResult{}, errors.New("CODING_PERSISTENT_PROCESS_LIMIT")
 		}
 	}
+	endPhase := executiondiag.Start(ctx, "prepare_runtime")
 	runtime, err := security.PrepareCommandRuntime(h.dataRoot, workspaceRoot, processID, profile)
+	endPhase(err)
 	if err != nil {
 		return ExecResult{}, err
 	}
@@ -262,7 +274,9 @@ func (h *Host) execute(ctx context.Context, workspaceRoot string, input ExecInpu
 			runtime.Cleanup()
 		}
 	}()
+	endPhase = executiondiag.Start(ctx, "resolve")
 	final, err := h.resolver.Resolve(workspaceRoot, arguments, runtime.BridgeRoot)
+	endPhase(err)
 	if err != nil {
 		return ExecResult{}, err
 	}
@@ -270,22 +284,31 @@ func (h *Host) execute(ctx context.Context, workspaceRoot string, input ExecInpu
 		Executable: final.TargetExecutable, Argv: final.TargetArgv, CWD: final.CWD, AccessProfile: profile,
 		TrustedGitExecutable: h.git, RemoteGitRewrite: remoteGitRewrite, ProtectedExecutables: h.protectedExecutables,
 	}
-	if err := security.Check(policyInvocation, workspaceRoot, h.dataRoot); err != nil {
+	endPhase = executiondiag.Start(ctx, "security_check")
+	err = security.Check(policyInvocation, workspaceRoot, h.dataRoot)
+	endPhase(err)
+	if err != nil {
 		return ExecResult{}, err
 	}
-	if err := h.gitSafety.Before(ctxOrBackground(ctx), policyInvocation, workspaceRoot); err != nil {
+	endPhase = executiondiag.Start(ctx, "git_safety")
+	err = h.gitSafety.Before(ctxOrBackground(ctx), policyInvocation, workspaceRoot)
+	endPhase(err)
+	if err != nil {
 		return ExecResult{}, err
 	}
 	sandbox := codex.CommandSandboxWorkspaceWrite
 	if security.IsFull(profile) {
 		sandbox = codex.CommandSandboxFullAccess
 	}
+	endPhase = executiondiag.Start(ctx, "environment")
 	environment, err := runtime.Environment(final.Environment, sandbox)
+	endPhase(err)
 	if err != nil {
 		return ExecResult{}, err
 	}
 	commandCtx := ctxOrBackground(ctx)
 	var cancel context.CancelFunc = func() {}
+	var stopCallerCancellation = func() bool { return true }
 	if !persistent {
 		timeout, timeoutErr := commandTimeout(input.TimeoutSeconds)
 		if timeoutErr != nil {
@@ -293,8 +316,10 @@ func (h *Host) execute(ctx context.Context, workspaceRoot string, input ExecInpu
 		}
 		commandCtx, cancel = context.WithTimeout(commandCtx, timeout)
 	} else {
-		commandCtx, cancel = context.WithCancel(context.Background())
+		commandCtx, cancel = context.WithCancel(context.WithoutCancel(ctx))
+		stopCallerCancellation = context.AfterFunc(ctx, cancel)
 	}
+	defer stopCallerCancellation()
 	cancelTransferred := false
 	defer func() {
 		if !cancelTransferred {
@@ -317,6 +342,7 @@ func (h *Host) execute(ctx context.Context, workspaceRoot string, input ExecInpu
 		launchExecutable = h.proxyExecutable
 		launchArgv = []string{commandproxy.Argument, payloadPath}
 	}
+	endPhase = executiondiag.Start(commandCtx, "start_command")
 	handle, err := h.service.StartCommand(commandCtx, codex.CommandSpec{
 		ProcessID: processID, Executable: launchExecutable, Argv: launchArgv,
 		CWD: final.CWD, WritableRoot: workspaceRoot,
@@ -324,6 +350,7 @@ func (h *Host) execute(ctx context.Context, workspaceRoot string, input ExecInpu
 		Environment:   environment,
 		Sandbox:       sandbox, NetworkAccess: networkAccess,
 	})
+	endPhase(err)
 	if err != nil {
 		cancel()
 		return ExecResult{}, err
@@ -333,7 +360,7 @@ func (h *Host) execute(ctx context.Context, workspaceRoot string, input ExecInpu
 		process := &persistentProcess{
 			id: processID, pid: handle.PID(), workspace: workspaceRoot, command: input.Command,
 			argv: append([]string(nil), input.Argv...), startedAt: startedAt, state: "running",
-			handle: handle, runtime: runtime, done: make(chan struct{}), stdoutDir: stdoutDir, stderrDir: stderrDir,
+			handle: handle, runtime: runtime, trace: trace, done: make(chan struct{}), stdoutDir: stdoutDir, stderrDir: stderrDir,
 		}
 		state := map[string]any{
 			"schema": "cwapi.persistent-process.v1", "process_id": processID, "workspace": workspaceRoot,
@@ -355,6 +382,7 @@ func (h *Host) execute(ctx context.Context, workspaceRoot string, input ExecInpu
 		h.processes[processID] = process
 		h.processMu.Unlock()
 		keepRuntime = true
+		stopCallerCancellation()
 		cancelTransferred = true
 		go h.watchPersistent(process, cancel)
 		return process.snapshot(), nil
@@ -362,10 +390,23 @@ func (h *Host) execute(ctx context.Context, workspaceRoot string, input ExecInpu
 
 	select {
 	case result := <-handle.Done():
+		if errors.Is(result.Err, context.DeadlineExceeded) {
+			return ExecResult{}, fmt.Errorf("CODEX_TOOLHOST_COMMAND_TIMEOUT: %w", result.Err)
+		}
+		if errors.Is(result.Err, context.Canceled) {
+			return ExecResult{}, fmt.Errorf("CODEX_TOOLHOST_COMMAND_CANCELED: %w", result.Err)
+		}
 		return commandResult(result, "", 0, time.Time{}), nil
 	case <-commandCtx.Done():
-		_ = handle.Stop()
-		return ExecResult{}, fmt.Errorf("CODEX_TOOLHOST_COMMAND_TIMEOUT: %w", commandCtx.Err())
+		stopErr := handle.Stop()
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		cleanupErr := handle.WaitCleanup(cleanupCtx)
+		cleanupCancel()
+		code := "CODEX_TOOLHOST_COMMAND_TIMEOUT"
+		if !errors.Is(commandCtx.Err(), context.DeadlineExceeded) {
+			code = "CODEX_TOOLHOST_COMMAND_CANCELED"
+		}
+		return ExecResult{}, errors.Join(fmt.Errorf("%s: %w", code, commandCtx.Err()), stopErr, cleanupErr)
 	}
 }
 
@@ -373,6 +414,7 @@ func (h *Host) watchPersistent(process *persistentProcess, cancel context.Cancel
 	result := <-process.handle.Done()
 	cancel()
 	output := commandResult(result, process.id, process.pid, process.startedAt)
+	output.Diagnostics = process.trace.Snapshot()
 	stdoutArchive, _ := commandproxy.ReadTail(process.stdoutDir, persistentArchiveBytes)
 	stderrArchive, _ := commandproxy.ReadTail(process.stderrDir, persistentArchiveBytes)
 	if output.Stdout == "" {
@@ -486,7 +528,8 @@ func (p *persistentProcess) snapshotLocked() ExecResult {
 		return p.result
 	}
 	return ExecResult{
-		State: p.state, ProcessID: p.id, PID: p.pid,
+		Diagnostics: p.trace.Snapshot(),
+		State:       p.state, ProcessID: p.id, PID: p.pid,
 		StartedAt: p.startedAt.Format(time.RFC3339Nano),
 	}
 }

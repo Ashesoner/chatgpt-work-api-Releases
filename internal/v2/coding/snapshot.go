@@ -1,11 +1,16 @@
 package coding
 
-import "sort"
+import (
+	"sort"
+
+	"github.com/AAAYNMMM/CWapi/internal/executiondiag"
+)
 
 type RuntimeSnapshot struct {
-	State        string   `json:"state"`
-	Active       int      `json:"active"`
-	Repositories []string `json:"repositories,omitempty"`
+	State         string                 `json:"state"`
+	Active        int                    `json:"active"`
+	Repositories  []string               `json:"repositories,omitempty"`
+	LastExecution *executiondiag.Outcome `json:"last_execution,omitempty"`
 }
 
 func (s *Service) RuntimeSnapshot() RuntimeSnapshot {
@@ -16,6 +21,7 @@ func (s *Service) RuntimeSnapshot() RuntimeSnapshot {
 	defer s.mu.RUnlock()
 	seen := make(map[string]struct{})
 	active := 0
+	var lastExecution *executiondiag.Outcome
 	for key, owner := range s.active {
 		if owner == "" {
 			continue
@@ -29,6 +35,11 @@ func (s *Service) RuntimeSnapshot() RuntimeSnapshot {
 		}
 		if record := s.sessions[owner]; record != nil {
 			seen[record.repository] = struct{}{}
+			record.mu.Lock()
+			if record.lastExecution != nil && (lastExecution == nil || record.lastExecution.At > lastExecution.At) {
+				lastExecution = record.lastExecution
+			}
+			record.mu.Unlock()
 		}
 	}
 	repositories := make([]string, 0, len(seen))
@@ -42,5 +53,5 @@ func (s *Service) RuntimeSnapshot() RuntimeSnapshot {
 	} else if active > 0 {
 		state = "active"
 	}
-	return RuntimeSnapshot{State: state, Active: active, Repositories: repositories}
+	return RuntimeSnapshot{State: state, Active: active, Repositories: repositories, LastExecution: lastExecution}
 }

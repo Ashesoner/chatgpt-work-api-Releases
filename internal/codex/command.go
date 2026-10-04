@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/AAAYNMMM/CWapi/internal/childenv"
+	"github.com/AAAYNMMM/CWapi/internal/executiondiag"
 	"github.com/AAAYNMMM/CWapi/internal/processcontract"
 )
 
@@ -40,12 +41,14 @@ type CommandResult struct {
 
 type CommandHandle struct {
 	done        chan CommandResult
+	cleaned     chan struct{}
 	cancel      context.CancelFunc
 	client      *Client
 	home        string
 	cleanupOnce sync.Once
 	stopOnce    sync.Once
 	stopErr     error
+	cleanupErr  error
 }
 
 func (h *CommandHandle) Done() <-chan CommandResult {
@@ -83,7 +86,9 @@ func (s *Service) StartCommand(ctx context.Context, spec CommandSpec) (*CommandH
 	if err := validateCommandSpec(spec); err != nil {
 		return nil, err
 	}
+	endPhase := executiondiag.Start(ctx, "runtime_integrity")
 	actualHash, err := hashFile(s.codexExe)
+	endPhase(err)
 	if err != nil {
 		return nil, fmt.Errorf("CODEX_RUNTIME_UNAVAILABLE: %w", err)
 	}
@@ -99,15 +104,22 @@ func (s *Service) StartCommand(ctx context.Context, spec CommandSpec) (*CommandH
 	if err := os.Mkdir(home, 0o700); err != nil {
 		return nil, fmt.Errorf("CODEX_EXECUTION_HOME_CREATE_FAILED: %w", err)
 	}
-	if err := ensureCommandHome(home); err != nil {
-		return nil, err
-	}
 	removeHome := true
 	defer func() {
 		if removeHome {
 			_ = os.RemoveAll(home)
 		}
 	}()
+	if err := ensureCommandHome(home); err != nil {
+		return nil, err
+	}
+	endPhase = executiondiag.Start(ctx, "sandbox_identity")
+	observeCommandACL(ctx, spec)
+	err = prepareCommandIdentity(s.dataRoot, home, spec)
+	endPhase(err)
+	if err != nil {
+		return nil, fmt.Errorf("CODEX_SANDBOX_IDENTITY_FAILED: %w", err)
+	}
 
 	if ctx == nil {
 		ctx = context.Background()
@@ -118,13 +130,13 @@ func (s *Service) StartCommand(ctx context.Context, spec CommandSpec) (*CommandH
 		cancel()
 		return nil, err
 	}
-	handle := &CommandHandle{done: make(chan CommandResult, 1), cancel: cancel, client: client, home: home}
+	handle := &CommandHandle{done: make(chan CommandResult, 1), cleaned: make(chan struct{}), cancel: cancel, client: client, home: home}
 	removeHome = false
 	go handle.run(commandCtx, commandParams(spec))
 	return handle, nil
 }
 
-func (s *Service) startCommandClient(ctx context.Context, home, cwd string, environment []string) (*Client, error) {
+func (s *Service) startCommandClient(ctx context.Context, home, cwd string, environment []string) (output *Client, setupErr error) {
 	notifications := make(chan map[string]any, 8)
 	newClient := func() *Client {
 		return NewClient(s.codexExe, home, "", environment, 30*time.Second, func(message map[string]any) {
@@ -135,22 +147,27 @@ func (s *Service) startCommandClient(ctx context.Context, home, cwd string, envi
 		})
 	}
 	client := newClient()
-	if err := startOwnedCommandClient(ctx, client); err != nil {
-		return nil, err
+	endPhase := executiondiag.Start(ctx, "app_server_start")
+	startErr := startOwnedCommandClient(ctx, client)
+	endPhase(startErr)
+	if startErr != nil {
+		return nil, startErr
 	}
 	readinessCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
+	endPhase = executiondiag.Start(ctx, "sandbox_readiness")
 	readiness, err := client.request(readinessCtx, "windowsSandbox/readiness", nil, true)
+	endPhase(err)
 	if err != nil {
-		closeCommandClient(client)
-		return nil, fmt.Errorf("CODEX_SANDBOX_READINESS_FAILED: %w", err)
+		return nil, errors.Join(fmt.Errorf("CODEX_SANDBOX_READINESS_FAILED: %w", err), closeCommandClient(client))
 	}
 	if objectString(readiness, "status") == "ready" {
 		return client, nil
 	}
+	endSetup := executiondiag.Start(ctx, "sandbox_setup")
+	defer func() { endSetup(setupErr) }()
 	if _, err := client.request(readinessCtx, "windowsSandbox/setupStart", map[string]any{"mode": "unelevated", "cwd": cwd}, true); err != nil {
-		closeCommandClient(client)
-		return nil, fmt.Errorf("CODEX_SANDBOX_SETUP_START_FAILED: %w", err)
+		return nil, errors.Join(fmt.Errorf("CODEX_SANDBOX_SETUP_START_FAILED: %w", err), closeCommandClient(client))
 	}
 	for {
 		select {
@@ -160,23 +177,22 @@ func (s *Service) startCommandClient(ctx context.Context, home, cwd string, envi
 			}
 			params, _ := message["params"].(map[string]any)
 			if success, _ := params["success"].(bool); !success {
-				closeCommandClient(client)
-				return nil, errors.New("CODEX_SANDBOX_SETUP_FAILED")
+				return nil, errors.Join(errors.New("CODEX_SANDBOX_SETUP_FAILED"), closeCommandClient(client))
 			}
-			closeCommandClient(client)
+			if err := closeCommandClient(client); err != nil {
+				return nil, fmt.Errorf("CODEX_SANDBOX_SETUP_CLEANUP_FAILED: %w", err)
+			}
 			client = newClient()
 			if err := startOwnedCommandClient(ctx, client); err != nil {
 				return nil, err
 			}
 			verify, verifyErr := client.request(readinessCtx, "windowsSandbox/readiness", nil, true)
 			if verifyErr != nil || objectString(verify, "status") != "ready" {
-				closeCommandClient(client)
-				return nil, errors.New("CODEX_SANDBOX_NOT_READY")
+				return nil, errors.Join(errors.New("CODEX_SANDBOX_NOT_READY"), verifyErr, closeCommandClient(client))
 			}
 			return client, nil
 		case <-readinessCtx.Done():
-			closeCommandClient(client)
-			return nil, fmt.Errorf("CODEX_SANDBOX_SETUP_TIMEOUT: %w", readinessCtx.Err())
+			return nil, errors.Join(fmt.Errorf("CODEX_SANDBOX_SETUP_TIMEOUT: %w", readinessCtx.Err()), closeCommandClient(client))
 		}
 	}
 }
@@ -185,20 +201,24 @@ func startOwnedCommandClient(ctx context.Context, client *Client) error {
 	startCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	if err := client.Start(startCtx); err != nil {
-		client.Close()
-		return err
+		return errors.Join(err, closeCommandClient(client))
 	}
 	if err := client.ownProcessTree(); err != nil {
-		client.Close()
-		return fmt.Errorf("CODEX_COMMAND_PROCESS_SCOPE_FAILED: %w", err)
+		return errors.Join(fmt.Errorf("CODEX_COMMAND_PROCESS_SCOPE_FAILED: %w", err), closeCommandClient(client))
 	}
 	return nil
 }
 
 func (h *CommandHandle) run(ctx context.Context, params map[string]any) {
+	endPhase := executiondiag.Start(ctx, "command_exec")
 	value, err := h.client.request(ctx, "command/exec", params, true)
+	endPhase(err)
 	result := decodeCommandResult(value, err)
+	endCleanup := executiondiag.Start(ctx, "command_cleanup")
 	h.finish()
+	endCleanup(errors.Join(h.stopErr, h.cleanupErr))
+	result.Err = errors.Join(result.Err, h.stopErr, h.cleanupErr)
+	close(h.cleaned)
 	h.done <- result
 	close(h.done)
 }
@@ -209,21 +229,43 @@ func (h *CommandHandle) finish() {
 		select {
 		case <-h.client.done:
 		case <-time.After(3 * time.Second):
+			h.cleanupErr = errors.New("CODEX_COMMAND_PROCESS_EXIT_TIMEOUT")
 		}
-		_ = os.RemoveAll(h.home)
+		if err := os.RemoveAll(h.home); err != nil {
+			h.cleanupErr = errors.Join(h.cleanupErr, fmt.Errorf("CODEX_COMMAND_HOME_CLEANUP_FAILED: %w", err))
+		}
 	})
 }
 
-func closeCommandClient(client *Client) {
-	if client == nil {
-		return
+// WaitCleanup does not consume Done, whose result belongs to the foreground
+// executor or persistent-process watcher.
+func (h *CommandHandle) WaitCleanup(ctx context.Context) error {
+	select {
+	case <-h.cleaned:
+		return errors.Join(h.stopErr, h.cleanupErr)
+	case <-ctx.Done():
+		return fmt.Errorf("CODEX_COMMAND_CLEANUP_TIMEOUT: %w", ctx.Err())
 	}
-	_ = client.releaseProcessTree()
+}
+
+// Before a CommandHandle exists, the caller still owns cleanup. Preserve both
+// job termination failures and an unconfirmed app-server exit for that caller.
+func closeCommandClient(client *Client) error {
+	if client == nil {
+		return nil
+	}
+	cleanupErr := client.releaseProcessTree()
 	client.Close()
+	// A failed launch has no Wait goroutine and therefore never closes done.
+	if client.cmd == nil || client.cmd.Process == nil {
+		return cleanupErr
+	}
 	select {
 	case <-client.done:
 	case <-time.After(3 * time.Second):
+		cleanupErr = errors.Join(cleanupErr, errors.New("CODEX_COMMAND_PROCESS_EXIT_TIMEOUT"))
 	}
+	return cleanupErr
 }
 
 func commandParams(spec CommandSpec) map[string]any {

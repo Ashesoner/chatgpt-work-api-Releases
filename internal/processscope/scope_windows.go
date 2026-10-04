@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -67,10 +68,37 @@ func (s *Scope) Close() error {
 	if s.job == 0 {
 		return nil
 	}
+	// Closing a kill-on-close job requests termination; it does not wait for
+	// processes blocked in kernel filesystem work to release directory handles.
+	// Keep the owned job queryable until it is empty, with a bounded wait.
+	terminationErr := windows.TerminateJobObject(s.job, 1)
+	if terminationErr == nil {
+		deadline := time.Now().Add(3 * time.Second)
+		for {
+			var accounting struct {
+				UserTime, KernelTime, PeriodUserTime, PeriodKernelTime           int64
+				PageFaults, TotalProcesses, ActiveProcesses, TerminatedProcesses uint32
+			}
+			queryErr := windows.QueryInformationJobObject(s.job, windows.JobObjectBasicAccountingInformation,
+				uintptr(unsafe.Pointer(&accounting)), uint32(unsafe.Sizeof(accounting)), nil)
+			if queryErr != nil {
+				terminationErr = fmt.Errorf("PROCESS_JOB_QUERY_FAILED: %w", queryErr)
+				break
+			}
+			if accounting.ActiveProcesses == 0 {
+				break
+			}
+			if time.Now().After(deadline) {
+				terminationErr = errors.New("PROCESS_JOB_TERMINATION_TIMEOUT")
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
 	err := windows.CloseHandle(s.job)
 	s.job = 0
 	if err != nil {
-		return fmt.Errorf("PROCESS_JOB_CLOSE_FAILED: %w", err)
+		return errors.Join(terminationErr, fmt.Errorf("PROCESS_JOB_CLOSE_FAILED: %w", err))
 	}
-	return nil
+	return terminationErr
 }

@@ -22,6 +22,8 @@ Web GPT
 
 Each command gets a new `CWapi-data/temp/codex-executions/<process-id>` CODEX_HOME containing only CWapi's execution config and defense-in-depth rules. The app-server environment removes OpenAI/Codex API keys, does not read the current user's `~/.codex`, and deletes the execution home when the command ends.
 
+Windows SAFE command homes also receive root capability IDs derived from a persistent per-workspace identity seed. This prevents repeated commands from adding fresh inherited ACL identities to durable roots while keeping command homes and account state isolated. See [Windows SAFE execution and lifecycle](SAFE_WINDOWS_EXECUTION.md) for diagnostics, large-workspace behavior, legacy ACL handling and native regression checks.
+
 CWapi calls only app-server initialization, Windows sandbox readiness/setup, and `command/exec`. No `thread/start`, `turn/start`, auth, account, model, history or rate-limit method is used by the 2.0 Coding path.
 
 ## Read/write behavior

@@ -94,6 +94,10 @@ load_skill
 
 返回 `state,repository,target_ref,resolved_commit,current_head,current_branch,detached,tracking_head,tracked_dirty,divergence,last_error,persistent_processes`。idle 状态会重新读取所选 branch workspace 的本地 Git truth 并回写 active session cache，因此后续 `coding_open(..., resume=true)` 不会回退到旧 HEAD/branch/dirty。`persistent_processes` 只列该 workspace 的 active persistent process 的 `process_id/state/command/pid/started_at/elapsed_seconds`，不回显 argv。当 `state=busy` 时额外返回 `active_action,active_command,active_started_at,active_elapsed_seconds`。该操作不 fetch，也不返回 Codex transcript。目标 branch 没有 active session 时返回明确的 not-active 错误。
 
+`coding_status.state=ready` 仅表示当前没有占用中的前台 Coding 操作，不等价于 Windows sandbox 已验证健康，也不表示 persistent process 全部停止。保留原有 `ready/busy` 语义。
+
+新增的可选 `last_execution` 表示所选 branch active session 最近一次 `run/start` 请求的结果：`state,at,error,diagnostics`。首次请求前为 `unverified`；成功请求会覆盖先前失败。它不是持久健康记录，persistent process 的后续状态仍通过 `coding_exec(action=status)` 查询。`diagnostics` 包含 profile、阶段耗时和权限规则数量提示；`command_exec` 同时覆盖沙箱启动与目标执行，不能仅凭该阶段断言目标尚未启动。详见 [Windows SAFE 执行](SAFE_WINDOWS_EXECUTION.md)。
+
 ### `coding_attachment`
 
 ```json
