@@ -1,5 +1,14 @@
 ﻿# Changelog
 
+## Fork integration additions — `feature/upstream-2.0.6-integration`
+
+These items are additions in this fork after the upstream 2.0.6 source snapshot, not claims about the upstream 2.0.6 release package:
+
+- branch-aware durable workspaces: the same repository can keep different branches active independently, with optional `target_ref` routing on exec/status/attachment/close and exact no-fallback semantics;
+- Windows SAFE command capability identity/cleanup fixes that keep temporary command identities bounded to command lifetime;
+- independent Coding/Agent Tunnel network routing: each bundled `tunnel-client` can use Direct or an explicit HTTP/HTTPS control-plane proxy, persisted in `CWapi-data/config/tunnel-network.json`; local MCP forwarding stays direct, and switching the setting restarts only the affected Tunnel child;
+- the existing `cwapi.config.v3` schema remains unchanged, preserving rollback compatibility with older executables that do not understand Tunnel network routing.
+
 ## 2.0.6 — 2026-09-17 — Current implementation
 
 2.0.6 聚焦简单、稳定与高效，并在 2.0.5 基础上补齐图片与多账号能力：

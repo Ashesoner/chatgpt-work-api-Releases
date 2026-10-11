@@ -101,7 +101,7 @@ Agent Adapter parses each external request once. Text/tool data and ordered `ima
 
 应用在 single-instance lock 后创建 2.0 Service：
 
-1. 读取或创建 strict v3 config；
+1. 读取或创建 strict v3 config，并读取独立的 `CWapi-data/config/tunnel-network.json`（缺失时两条 Tunnel 都默认直连）；
 2. 创建 workspace manager、Coding/Agent services；
 3. 启动一个 MCP listener；
 4. Agent enabled 时启动 Provider；
@@ -109,7 +109,7 @@ Agent Adapter parses each external request once. Text/tool data and ordered `ima
 6. 发布 bounded Desktop snapshot。
 
 Desktop 的 SAFE/FULL access profile、Coding network 与 Remote Git Rewrite capability 都使用原子配置保存 + 当前 Coding runtime 热更新，不重启 Service，也不失效 active internal Coding session；在执行中的 command 保持其启动时配置，后续 command 使用新设置。Remote Git Rewrite 开启需要应用内确认。其它 Desktop 配置修改仍先检查 active Coding 与 pending/claimed Agent，允许后执行 atomic save + Service restart；启动失败则恢复原配置并重启原 Service。
-Tunnel Runtime API key 不进入 config；启用后由 Service 从各自的 Windows Credential Manager 条目读取，并只通过环境变量注入对应的 bundled tunnel child process。两个 tunnel-client 使用独立 profile、工作目录和 `main` 转发目标。
+Tunnel Runtime API key 不进入 config；启用后由 Service 从各自的 Windows Credential Manager 条目读取，并只通过环境变量注入对应的 bundled tunnel child process。两个 tunnel-client 使用独立 profile、工作目录和 `main` 转发目标。`tunnel-network.json` 独立保存 Coding/Agent 的 `direct` 或 HTTP/HTTPS proxy endpoint；选择代理时 CWapi 只向对应 child 注入 `CONTROL_PLANE_HTTP_PROXY`，本地 `main -> 127.0.0.1` MCP 转发保持直连。切换该设置只重启对应 tunnel-client，不重启 Service、workspace、Agent/Coding runtime 或另一条 Tunnel。
 任一 tunnel-client 异常退出后，本地 Manager 会以指数退避自动重启最多 3 次；关闭或重配置会取消待执行的重启。
 
 ## Workspace maintenance

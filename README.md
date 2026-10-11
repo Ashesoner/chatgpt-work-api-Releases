@@ -84,6 +84,7 @@ Software such as Cline or Roo Code **may** work when configured for a custom Ope
 - Keep ordinary workspace work in `SAFE`; use `FULL` only when the current Windows user's broader development environment is intentionally required.
 - Give OpenAI-compatible local software a localhost model endpoint backed by Web GPT.
 - Keep Coding and Agent independent: separate MCP tokens, tool catalogs, Tunnel configuration, and runtime paths.
+- Route each bundled Tunnel control-plane connection either directly or through its own explicit HTTP/HTTPS proxy; this does not change browser/system proxy settings or the local MCP forwarding path.
 - Keep ordinary file transfer disabled while allowing bounded raster-image transfer with original bytes and MIME preserved.
 
 ## Which version should I use?

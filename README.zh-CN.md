@@ -84,6 +84,7 @@ Cline、Roo Code 等允许自定义 OpenAI-compatible provider 的客户端**可
 - 普通 workspace 开发保持 `SAFE`；只有确实需要当前 Windows 用户更完整的开发环境时才切换 `FULL`。
 - 给本地 OpenAI-compatible 软件提供一个由 Web GPT 驱动的 localhost 模型入口。
 - Coding 与 Agent 真正隔离：不同 MCP token、不同 tool catalog、不同 Tunnel 配置和 runtime path。
+- Coding 与 Agent 的 Tunnel 出站可分别选择直连或显式 HTTP/HTTPS 代理；该设置不修改浏览器/Windows 系统代理，也不改变本地 MCP 转发链路。
 - 普通文件传输仍关闭；Coding 与 Agent 均可传输受限栅格图片，并保持原始 bytes/MIME，不做图片转码。
 
 ## 版本怎么选？

@@ -41,10 +41,11 @@ Invalid Tunnel ID, invalid/missing Runtime API key, blocked outbound connectivit
 - Runtime API key is the one authorized for that Tunnel.
 - `runtime/tunnel/current/tunnel-client.exe` exists in the portable.
 - Local firewall/proxy policy allows the tunnel client to make its outbound connection.
+- If the CWapi Network row is set to HTTP proxy, the configured `http://` / `https://` endpoint is reachable. This Tunnel path does not require Windows system proxy or TUN mode; those settings do not repair a wrong explicit endpoint.
 
 **How to fix**
 
-Re-enter the matching Tunnel ID and Runtime API key in the correct CWapi panel. Do not paste the Runtime API key into `cwapi.json`; CWapi stores it in Windows Credential Manager.
+Re-enter the matching Tunnel ID and Runtime API key in the correct CWapi panel. If an explicit Tunnel proxy is selected, verify or switch the collapsed Network row back to Direct. Do not paste the Runtime API key into `cwapi.json`; CWapi stores it in Windows Credential Manager. Changing Direct/HTTP proxy restarts only the affected tunnel-client child.
 
 ## Tunnel keeps reconnecting
 

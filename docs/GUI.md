@@ -7,7 +7,7 @@
 ```text
 CWapi
 Coding | Agent
-当前链路的 Tunnel 卡片
+当前链路的 ChatGPT MCP 账号卡片（含折叠网络设置）
 当前链路的运行卡片
 当前错误码（仅失败时）
 ```
@@ -16,6 +16,7 @@ Coding | Agent
 - Agent 页：Agent Tunnel、enabled、Provider URL、API key、bridge Offline/Ready/Busy、pending/claimed/completed。
 - Tunnel 初始启动失败或异常退出后的自动退避重启显示为“正在重连”；断开或重配置会取消重启。
 - Tunnel ID 只在可编辑输入框中显示，不再额外渲染重复的“隧道 ID / 复制”行。
+- 每个 `CHATGPT MCP 账号`卡片内有一行折叠网络摘要；默认只显示“直连”或 `HTTP代理 · <port>`，点击“设置”才展开直连/HTTP 代理选择和地址输入。Coding 与 Agent 各自保存网络设置。
 - 本地 `127.0.0.1` MCP 地址不在主页面展示；它仍作为本机 MCP 客户端和 Tunnel 的内部转发目标保留。
 - 页面不保留日志历史；失败时只显示当前错误码，不显示路径、密钥或原始错误详情。
 
@@ -32,8 +33,9 @@ GUI 可以：
 - Advanced Remote Git Rewrite 开关；
 - Agent enable/disable；
 - Agent API key regenerate；
+- Coding / Agent Tunnel 独立的直连或 HTTP/HTTPS 代理设置；
 
-SAFE/FULL、Coding network access 与 Remote Git Rewrite 都是运行时能力，可在 Coding session 保持打开时切换，不重启 Service，也不改变 active internal Coding session；已在执行的命令保持启动时的配置，下一条 `coding_exec` 使用新设置。网络和 Remote Git Rewrite 默认关闭。开启 Remote Git Rewrite 必须经过应用内确认，文案明确该能力允许 direct force/delete remote updates，但不会解除危险 transport、receive-pack、CWapi 自保护或自动提权边界。其它需要重启 Service 的配置变更在 active Coding session 或 pending/claimed Agent request 存在时仍拒绝。
+SAFE/FULL、Coding network access 与 Remote Git Rewrite 都是运行时能力，可在 Coding session 保持打开时切换，不重启 Service，也不改变 active internal Coding session；已在执行的命令保持启动时的配置，下一条 `coding_exec` 使用新设置。Coding/Agent Tunnel 网络设置同样不重启 Service，只替换对应的 `tunnel-client` 子进程；另一条 Tunnel、MCP listener 与 branch-aware Coding session 不受影响。命令网络和 Remote Git Rewrite 默认关闭。开启 Remote Git Rewrite 必须经过应用内确认，文案明确该能力允许 direct force/delete remote updates，但不会解除危险 transport、receive-pack、CWapi 自保护或自动提权边界。其它需要重启 Service 的配置变更在 active Coding session 或 pending/claimed Agent request 存在时仍拒绝。
 
 ## Workspace maintenance
 

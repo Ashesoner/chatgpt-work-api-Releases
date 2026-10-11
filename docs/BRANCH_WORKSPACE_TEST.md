@@ -409,3 +409,14 @@ Fill this section during implementation.
 
 - Same-repository dual-branch executable routing probe: skipped by user; branch-aware source/unit coverage remains in `internal/v2/coding/service_branch_test.go`.
 - Same-branch concurrent-operation executable contention probe: skipped by user; the service still enforces one foreground operation per selected workspace and returns `CODING_COMMAND_ACTIVE` while that record is busy.
+
+## Post-proxy regression validation — 2026-10-11
+
+- Baseline after the proxy feature commit: `e32beb77e531b8d6d6bfef315fdcc6c018409e80` on `feature/upstream-2.0.6-integration`.
+- The proxy commit does not modify `internal/v2/coding`, `internal/v2/workspace`, `internal/security`, or `internal/codex`; branch-aware ownership/routing, workspace identity, SAFE/FULL enforcement, and Codex command-host implementation therefore retain their existing source paths.
+- The shared `internal/v2/service` changes were reviewed: Tunnel network reconfiguration is serialized by the existing lifecycle lock, updates only the selected Tunnel manager, and does not close/rebuild Coding workspaces, the MCP listener, Agent/Coding runtime, or the sibling Tunnel.
+- `go test ./...`: PASS after `e32beb7`; this includes the existing branch-aware Coding/workspace tests, Windows SAFE/Codex tests, the new Tunnel proxy tests, and root application tests.
+- Fresh targeted rerun with cache bypass: `go test -count=1 ./internal/v2/coding ./internal/v2/workspace ./internal/security ./internal/codex`: PASS; this specifically re-exercised multi-branch routing/workspace identity and the fork-added SAFE/Codex paths.
+- Frontend `npm test`: PASS, 1 test file / 3 tests.
+- Live Windows smoke test: PASS. Coding used explicit `http://127.0.0.1:7897`; TUN was off, Windows system proxy was toggled off for tens of seconds and restored, and the same CWapi/Tunnel processes remained running. The Coding tunnel-client was observed connected directly to the configured local proxy endpoint.
+- Result: no regression was found in the tested branch-aware source/unit paths or the other exercised fork-added 2.0.6 integration features. This is targeted regression evidence, not a claim of exhaustive certification of every platform condition.

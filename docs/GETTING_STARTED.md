@@ -114,6 +114,12 @@ CWapi stores the ID in `CWapi-data/config/cwapi.json` and the Runtime API key in
 
 When the configuration is valid, the bundled `tunnel-client` starts. If its child process fails or exits unexpectedly, CWapi performs bounded local restart attempts; the GUI can show a reconnecting state.
 
+### Optional: route only the Tunnel through an HTTP proxy
+
+The `CHATGPT MCP account` card includes a collapsed **Network** row. Coding and Agent can each use either **Direct** or an explicit `http://` / `https://` proxy such as `http://127.0.0.1:7897`. The setting applies only to that Tunnel client control-plane connection; local MCP forwarding remains direct, and CWapi does not require or change Windows system proxy or TUN mode for this path.
+
+CWapi stores these per-surface settings in `CWapi-data/config/tunnel-network.json`, separate from `cwapi.json`, so older executables that do not know this feature are not broken by unknown config fields. Changing the setting restarts only the affected `tunnel-client` child process.
+
 ## 7. Connect Coding in ChatGPT
 
 Use the custom MCP app / Developer Mode flow available to your ChatGPT workspace. Do not select a direct `127.0.0.1` Server URL. Use the Secure MCP Tunnel connection path and select the same Coding Tunnel you configured in CWapi.

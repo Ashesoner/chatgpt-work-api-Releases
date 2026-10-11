@@ -114,6 +114,12 @@ CWapi 会把 Tunnel ID 写入 `CWapi-data/config/cwapi.json`，Runtime API key �
 
 配置有效后，portable 内置的 `tunnel-client` 会启动。如果子进程首次启动失败或异常退出，CWapi 会做有界重试，GUI 可能显示“正在重连”。
 
+### 可选：只让 Tunnel 走 HTTP 代理
+
+`CHATGPT MCP 账号`卡片里有一行折叠的**网络**设置。Coding 和 Agent 可以分别选择**直连**或显式 `http://` / `https://` 代理，例如 `http://127.0.0.1:7897`。这个设置只作用于对应 `tunnel-client` 的控制面外连；本地 MCP 转发仍然直连，CWapi 也不要求或修改 Windows 系统代理与 TUN 模式。
+
+每条链路的设置保存在独立的 `CWapi-data/config/tunnel-network.json`，不向 `cwapi.json` 增加旧 EXE 不认识的字段。修改网络设置时只重启对应的 `tunnel-client` 子进程，不重启 CWapi Service、Coding workspace 或另一条 Tunnel。
+
 ## 7. 在 ChatGPT 连接 Coding
 
 使用你的 ChatGPT Workspace 当前提供的 custom MCP app / Developer Mode 流程。不要选择直接连接 `127.0.0.1` Server URL，而是走 Secure MCP Tunnel，并选择和 CWapi Coding 面板一致的那条 Tunnel。

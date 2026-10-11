@@ -41,10 +41,11 @@ Tunnel ID 不寻、Runtime API key 缺失/无效、出站网络被拦，或者 b
 - Runtime API key 对这条 Tunnel 有权限。
 - portable 中存在 `runtime/tunnel/current/tunnel-client.exe`。
 - 防火墙/代理允许 tunnel-client 建立出站连接。
+- 如果 CWapi 的“网络”行选择了 HTTP 代理，确认填写的 `http://` / `https://` endpoint 实际可达。Tunnel 这条链路不依赖 Windows 系统代理或 TUN 模式；显式代理地址写错时，开启它们也不会修复该地址。
 
 **怎么修**
 
-在正确的 CWapi Tunnel 面板重新填写匹配的 Tunnel ID 和 Runtime API key。Runtime API key 不应手工写进 `cwapi.json`，CWapi 会把它存到 Windows Credential Manager。
+在正确的 CWapi Tunnel 面板重新填写匹配的 Tunnel ID 和 Runtime API key。如果启用了显式 Tunnel 代理，检查折叠的“网络”设置，必要时切回“直连”。Runtime API key 不应手工写进 `cwapi.json`，CWapi 会把它存到 Windows Credential Manager。直连/HTTP 代理切换只重启对应的 tunnel-client 子进程。
 
 ## Tunnel 一直重连
 
