@@ -33,8 +33,12 @@ func TestReadyPreservesExecutionFailurePerBranchAndRecovers(t *testing.T) {
 	if err != nil || other.LastExecution.State != "unverified" {
 		t.Fatal("failure leaked between branches", other, err)
 	}
-	if runtime.service.RuntimeSnapshot().LastExecution.Error == "" {
+	snapshot := runtime.service.RuntimeSnapshot()
+	if snapshot.LastExecution.Error == "" {
 		t.Fatal("GUI runtime snapshot lost failure")
+	}
+	if snapshot.LastExecutionTarget != "refs/heads/branch-a" || snapshot.LastExecutionBranch != "branch-a" {
+		t.Fatalf("GUI runtime snapshot lost execution branch: target=%q branch=%q", snapshot.LastExecutionTarget, snapshot.LastExecutionBranch)
 	}
 	runtime.service.execute = func(context.Context, string, codextoolhost.ExecInput) (codextoolhost.ExecResult, error) {
 		return codextoolhost.ExecResult{State: "completed"}, nil

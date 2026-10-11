@@ -14,6 +14,7 @@ import (
 
 	"github.com/AAAYNMMM/CWapi/internal/childenv"
 	"github.com/AAAYNMMM/CWapi/internal/processlaunch"
+	"github.com/AAAYNMMM/CWapi/internal/processscope"
 	"github.com/AAAYNMMM/CWapi/internal/tunnelnetwork"
 	v2config "github.com/AAAYNMMM/CWapi/internal/v2/config"
 )
@@ -21,6 +22,7 @@ import (
 const (
 	profileDirectoryName = "tunnel"
 	profileFileName      = "openai-tunnel.yaml"
+	healthURLFileName    = "health.url"
 	processExitError     = "OPENAI_TUNNEL_EXITED"
 	defaultMaxRestarts   = 3
 	defaultRestartDelay  = time.Second
@@ -28,11 +30,12 @@ const (
 )
 
 type Snapshot struct {
-	State         string `json:"state"`
-	Configured    bool   `json:"configured"`
-	TunnelID      string `json:"tunnel_id,omitempty"`
-	APIKeyPresent bool   `json:"api_key_present"`
-	LastError     string `json:"last_error,omitempty"`
+	State           string `json:"state"`
+	ConnectionState string `json:"connection_state,omitempty"`
+	Configured      bool   `json:"configured"`
+	TunnelID        string `json:"tunnel_id,omitempty"`
+	APIKeyPresent   bool   `json:"api_key_present"`
+	LastError       string `json:"last_error,omitempty"`
 }
 
 type process interface {
@@ -48,15 +51,35 @@ type activeProcess struct {
 	startedAt time.Time
 }
 
-type commandProcess struct{ command *exec.Cmd }
+type commandProcess struct {
+	command *exec.Cmd
+	scope   *processscope.Scope
+}
 
-func (p commandProcess) Wait() error { return p.command.Wait() }
-
-func (p commandProcess) Kill() error {
-	if p.command == nil || p.command.Process == nil {
+func (p *commandProcess) Wait() error {
+	if p == nil || p.command == nil {
 		return errors.New("process is not running")
 	}
-	return p.command.Process.Kill()
+	waitErr := p.command.Wait()
+	if p.scope == nil {
+		return waitErr
+	}
+	return errors.Join(waitErr, p.scope.Close())
+}
+
+func (p *commandProcess) Kill() error {
+	if p == nil || p.command == nil || p.command.Process == nil {
+		return errors.New("process is not running")
+	}
+	if p.scope != nil {
+		if err := p.scope.Close(); err == nil {
+			return nil
+		}
+	}
+	if err := p.command.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+		return err
+	}
+	return nil
 }
 
 type Manager struct {
@@ -196,7 +219,10 @@ func (m *Manager) Start(context.Context) error {
 		return errors.New("OPENAI_TUNNEL_RUNTIME_MISSING")
 	}
 	if m.process != nil {
-		m.snapshot = m.configuredSnapshot("running", "")
+		// Preserve the health monitor's connection state when Start is called
+		// again for an already-running child.
+		m.snapshot.State = "running"
+		m.snapshot.LastError = ""
 		return nil
 	}
 	m.restartToken++
@@ -209,6 +235,10 @@ func (m *Manager) Start(context.Context) error {
 }
 
 func (m *Manager) launchLocked() error {
+	if err := os.Remove(m.healthURLPath()); err != nil && !errors.Is(err, os.ErrNotExist) {
+		m.snapshot = m.configuredSnapshot("failed", "OPENAI_TUNNEL_HEALTH_STATE_RESET_FAILED")
+		return fmt.Errorf("OPENAI_TUNNEL_HEALTH_STATE_RESET_FAILED: %w", err)
+	}
 	if err := m.writeProfile(); err != nil {
 		m.snapshot = m.configuredSnapshot("failed", "OPENAI_TUNNEL_PROFILE_WRITE_FAILED")
 		return fmt.Errorf("OPENAI_TUNNEL_PROFILE_WRITE_FAILED: %w", err)
@@ -222,7 +252,9 @@ func (m *Manager) launchLocked() error {
 	run := &activeProcess{process: child, done: make(chan struct{}), startedAt: time.Now()}
 	m.process = run
 	m.snapshot = m.configuredSnapshot("running", "")
+	m.snapshot.ConnectionState = "starting"
 	go m.wait(run)
+	go m.monitorConnection(run, m.httpProxy)
 	return nil
 }
 
@@ -419,13 +451,22 @@ func (m *Manager) Close(ctx context.Context) error {
 }
 
 func (m *Manager) configuredSnapshot(state, lastError string) Snapshot {
-	return Snapshot{
-		State:         state,
-		Configured:    m.config.Enabled,
-		TunnelID:      m.config.TunnelID,
-		APIKeyPresent: m.apiKey != "",
-		LastError:     lastError,
+	connectionState := ""
+	if state == "running" || state == "starting" {
+		connectionState = "starting"
 	}
+	return Snapshot{
+		State:           state,
+		ConnectionState: connectionState,
+		Configured:      m.config.Enabled,
+		TunnelID:        m.config.TunnelID,
+		APIKeyPresent:   m.apiKey != "",
+		LastError:       lastError,
+	}
+}
+
+func (m *Manager) healthURLPath() string {
+	return filepath.Join(m.profileDirectory, healthURLFileName)
 }
 
 func (m *Manager) writeProfile() error {
@@ -433,7 +474,8 @@ func (m *Manager) writeProfile() error {
 	if err := os.MkdirAll(directory, 0o700); err != nil {
 		return err
 	}
-	profile := fmt.Sprintf("config_version: 1\ncontrol_plane:\n  tunnel_id: %s\n  api_key: env:CONTROL_PLANE_API_KEY\nlog:\n  level: warn\n  format: struct-text\nhealth:\n  listen_addr: 127.0.0.1:0\nadmin_ui:\n  open_browser: false\nmcp:\n  server_urls:\n    - channel: main\n      url: %s\n", m.config.TunnelID, m.mcpURL)
+	healthURLFile := filepath.ToSlash(m.healthURLPath())
+	profile := fmt.Sprintf("config_version: 1\ncontrol_plane:\n  tunnel_id: %s\n  api_key: env:CONTROL_PLANE_API_KEY\nlog:\n  level: warn\n  format: struct-text\nhealth:\n  listen_addr: 127.0.0.1:0\n  url_file: %q\nadmin_ui:\n  open_browser: false\nmcp:\n  server_urls:\n    - channel: main\n      url: %s\n", m.config.TunnelID, healthURLFile, m.mcpURL)
 	temporary, err := os.CreateTemp(directory, ".openai-tunnel-*.tmp")
 	if err != nil {
 		return err
@@ -508,5 +550,11 @@ func startProcess(executable string, arguments []string, environment []string, d
 	if err := command.Start(); err != nil {
 		return nil, err
 	}
-	return commandProcess{command: command}, nil
+	scope, err := processscope.Attach(command.Process.Pid)
+	if err != nil {
+		_ = command.Process.Kill()
+		_ = command.Wait()
+		return nil, fmt.Errorf("OPENAI_TUNNEL_PROCESS_SCOPE_FAILED: %w", err)
+	}
+	return &commandProcess{command: command, scope: scope}, nil
 }

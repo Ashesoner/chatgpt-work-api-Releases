@@ -31,10 +31,11 @@ type AgentCredential struct {
 }
 
 type OpenAITunnelInfo struct {
-	Enabled       bool   `json:"enabled"`
-	TunnelID      string `json:"tunnel_id"`
-	APIKeyPresent bool   `json:"api_key_present"`
-	State         string `json:"state"`
+	Enabled         bool   `json:"enabled"`
+	TunnelID        string `json:"tunnel_id"`
+	APIKeyPresent   bool   `json:"api_key_present"`
+	State           string `json:"state"`
+	ConnectionState string `json:"connection_state,omitempty"`
 }
 
 type TunnelNetworkInfo struct {
@@ -84,7 +85,7 @@ func (a *App) startup(ctx context.Context) {
 	a.startupErr = err
 	a.mu.Unlock()
 	if err != nil {
-		fmt.Println("CWapi 2.0.6 startup degraded:", err.Error())
+		fmt.Println("CWapi 2.0.7 startup degraded:", err.Error())
 	}
 	if err == nil {
 		if profileErr := a.ensureTunnelProfiles(); profileErr != nil {
@@ -211,7 +212,7 @@ func (a *App) AgentOpenAITunnelInfo() OpenAITunnelInfo {
 func openAITunnelInfo(snapshot tunnel.Snapshot) OpenAITunnelInfo {
 	return OpenAITunnelInfo{
 		Enabled: snapshot.Configured, TunnelID: snapshot.TunnelID,
-		APIKeyPresent: snapshot.APIKeyPresent, State: snapshot.State,
+		APIKeyPresent: snapshot.APIKeyPresent, State: snapshot.State, ConnectionState: snapshot.ConnectionState,
 	}
 }
 

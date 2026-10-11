@@ -19,14 +19,18 @@ const (
 	wmDestroy      = 0x0002
 	wmLButtonUp    = 0x0202
 	wmRButtonUp    = 0x0205
+	wmContextMenu  = 0x007B
 	wmTrayIcon     = 0x8001
 	idiApplication = 32512
 
-	nimAdd     = 0x00000000
-	nimDelete  = 0x00000002
-	nifMessage = 0x00000001
-	nifIcon    = 0x00000002
-	nifTip     = 0x00000004
+	nimAdd             = 0x00000000
+	nimDelete          = 0x00000002
+	nimSetVersion      = 0x00000004
+	nifMessage         = 0x00000001
+	nifIcon            = 0x00000002
+	nifTip             = 0x00000004
+	nifShowTip         = 0x00000080
+	notifyIconVersion4 = 4
 
 	mfString       = 0x00000000
 	mfSeparator    = 0x00000800
@@ -39,29 +43,30 @@ const (
 )
 
 var (
-	user32                  = windows.NewLazySystemDLL("user32.dll")
-	shell32                 = windows.NewLazySystemDLL("shell32.dll")
-	kernel32                = windows.NewLazySystemDLL("kernel32.dll")
-	procRegisterClassExW    = user32.NewProc("RegisterClassExW")
-	procCreateWindowExW     = user32.NewProc("CreateWindowExW")
-	procDefWindowProcW      = user32.NewProc("DefWindowProcW")
-	procDestroyWindow       = user32.NewProc("DestroyWindow")
-	procGetMessageW         = user32.NewProc("GetMessageW")
-	procTranslateMessage    = user32.NewProc("TranslateMessage")
-	procDispatchMessageW    = user32.NewProc("DispatchMessageW")
-	procPostMessageW        = user32.NewProc("PostMessageW")
-	procPostQuitMessage     = user32.NewProc("PostQuitMessage")
-	procLoadIconW           = user32.NewProc("LoadIconW")
-	procDestroyIcon         = user32.NewProc("DestroyIcon")
-	procCreatePopupMenu     = user32.NewProc("CreatePopupMenu")
-	procAppendMenuW         = user32.NewProc("AppendMenuW")
-	procTrackPopupMenu      = user32.NewProc("TrackPopupMenu")
-	procDestroyMenu         = user32.NewProc("DestroyMenu")
-	procSetForegroundWindow = user32.NewProc("SetForegroundWindow")
-	procGetCursorPos        = user32.NewProc("GetCursorPos")
-	procShellNotifyIconW    = shell32.NewProc("Shell_NotifyIconW")
-	procExtractIconExW      = shell32.NewProc("ExtractIconExW")
-	procGetModuleHandleW    = kernel32.NewProc("GetModuleHandleW")
+	user32                     = windows.NewLazySystemDLL("user32.dll")
+	shell32                    = windows.NewLazySystemDLL("shell32.dll")
+	kernel32                   = windows.NewLazySystemDLL("kernel32.dll")
+	procRegisterClassExW       = user32.NewProc("RegisterClassExW")
+	procRegisterWindowMessageW = user32.NewProc("RegisterWindowMessageW")
+	procCreateWindowExW        = user32.NewProc("CreateWindowExW")
+	procDefWindowProcW         = user32.NewProc("DefWindowProcW")
+	procDestroyWindow          = user32.NewProc("DestroyWindow")
+	procGetMessageW            = user32.NewProc("GetMessageW")
+	procTranslateMessage       = user32.NewProc("TranslateMessage")
+	procDispatchMessageW       = user32.NewProc("DispatchMessageW")
+	procPostMessageW           = user32.NewProc("PostMessageW")
+	procPostQuitMessage        = user32.NewProc("PostQuitMessage")
+	procLoadIconW              = user32.NewProc("LoadIconW")
+	procDestroyIcon            = user32.NewProc("DestroyIcon")
+	procCreatePopupMenu        = user32.NewProc("CreatePopupMenu")
+	procAppendMenuW            = user32.NewProc("AppendMenuW")
+	procTrackPopupMenu         = user32.NewProc("TrackPopupMenu")
+	procDestroyMenu            = user32.NewProc("DestroyMenu")
+	procSetForegroundWindow    = user32.NewProc("SetForegroundWindow")
+	procGetCursorPos           = user32.NewProc("GetCursorPos")
+	procShellNotifyIconW       = shell32.NewProc("Shell_NotifyIconW")
+	procExtractIconExW         = shell32.NewProc("ExtractIconExW")
+	procGetModuleHandleW       = kernel32.NewProc("GetModuleHandleW")
 )
 
 type point struct {
@@ -113,14 +118,16 @@ type notifyIconData struct {
 }
 
 type windowsImplementation struct {
-	mu      sync.Mutex
-	started bool
-	hwnd    uintptr
-	wndProc uintptr
-	ready   chan error
-	done    chan struct{}
-	onOpen  func()
-	onExit  func()
+	mu             sync.Mutex
+	started        bool
+	hwnd           uintptr
+	wndProc        uintptr
+	icon           uintptr
+	taskbarCreated uint32
+	ready          chan error
+	done           chan struct{}
+	onOpen         func()
+	onExit         func()
 }
 
 func newImplementation(onOpen, onExit func()) implementation {
@@ -179,6 +186,8 @@ func (w *windowsImplementation) run() {
 	defer func() {
 		w.mu.Lock()
 		w.hwnd = 0
+		w.icon = 0
+		w.taskbarCreated = 0
 		w.started = false
 		done := w.done
 		w.mu.Unlock()
@@ -211,6 +220,16 @@ func (w *windowsImplementation) run() {
 	windowName, err := windows.UTF16PtrFromString("CWapi Tray")
 	if err != nil {
 		signalReady(fmt.Errorf("TRAY_WINDOW_NAME_INVALID: %w", err))
+		return
+	}
+	taskbarCreatedName, err := windows.UTF16PtrFromString("TaskbarCreated")
+	if err != nil {
+		signalReady(fmt.Errorf("TRAY_TASKBAR_MESSAGE_NAME_INVALID: %w", err))
+		return
+	}
+	taskbarCreated, _, callErr := procRegisterWindowMessageW.Call(uintptr(unsafe.Pointer(taskbarCreatedName)))
+	if taskbarCreated == 0 {
+		signalReady(winCallError("RegisterWindowMessageW(TaskbarCreated)", callErr))
 		return
 	}
 	w.wndProc = windows.NewCallback(func(hwnd uintptr, msg uint32, wParam, lParam uintptr) uintptr {
@@ -251,21 +270,14 @@ func (w *windowsImplementation) run() {
 	}
 	w.mu.Lock()
 	w.hwnd = hwnd
+	w.icon = icon
+	w.taskbarCreated = uint32(taskbarCreated)
 	w.mu.Unlock()
 
-	nid := notifyIconData{
-		CbSize:           uint32(unsafe.Sizeof(notifyIconData{})),
-		HWnd:             hwnd,
-		UID:              1,
-		UFlags:           nifMessage | nifIcon | nifTip,
-		UCallbackMessage: wmTrayIcon,
-		HIcon:            icon,
-	}
-	setUTF16(nid.SzTip[:], "CWapi v"+buildinfo.Version)
-	added, _, callErr := procShellNotifyIconW.Call(nimAdd, uintptr(unsafe.Pointer(&nid)))
-	if added == 0 {
+	nid, err := w.addNotificationIcon(hwnd, icon)
+	if err != nil {
 		_ = w.destroyWindow(hwnd)
-		signalReady(winCallError("Shell_NotifyIconW(NIM_ADD)", callErr))
+		signalReady(err)
 		return
 	}
 	defer procShellNotifyIconW.Call(nimDelete, uintptr(unsafe.Pointer(&nid)))
@@ -283,12 +295,20 @@ func (w *windowsImplementation) run() {
 }
 
 func (w *windowsImplementation) windowProc(hwnd uintptr, msg uint32, wParam, lParam uintptr) uintptr {
+	w.mu.Lock()
+	taskbarCreated := w.taskbarCreated
+	icon := w.icon
+	w.mu.Unlock()
+	if taskbarCreated != 0 && msg == taskbarCreated {
+		_, _ = w.addNotificationIcon(hwnd, icon)
+		return 0
+	}
 	switch msg {
 	case wmTrayIcon:
-		switch uint32(lParam) {
+		switch trayNotificationEvent(lParam) {
 		case wmLButtonUp:
 			go safeInvoke(w.onOpen)
-		case wmRButtonUp:
+		case wmRButtonUp, wmContextMenu:
 			w.showMenu(hwnd)
 		}
 		return 0
@@ -302,6 +322,33 @@ func (w *windowsImplementation) windowProc(hwnd uintptr, msg uint32, wParam, lPa
 		result, _, _ := procDefWindowProcW.Call(hwnd, uintptr(msg), wParam, lParam)
 		return result
 	}
+}
+
+func (w *windowsImplementation) addNotificationIcon(hwnd, icon uintptr) (notifyIconData, error) {
+	nid := notifyIconData{
+		CbSize:           uint32(unsafe.Sizeof(notifyIconData{})),
+		HWnd:             hwnd,
+		UID:              1,
+		UFlags:           nifMessage | nifIcon | nifTip | nifShowTip,
+		UCallbackMessage: wmTrayIcon,
+		HIcon:            icon,
+	}
+	setUTF16(nid.SzTip[:], "CWapi v"+buildinfo.Version)
+	added, _, callErr := procShellNotifyIconW.Call(nimAdd, uintptr(unsafe.Pointer(&nid)))
+	if added == 0 {
+		return nid, winCallError("Shell_NotifyIconW(NIM_ADD)", callErr)
+	}
+	nid.UTimeoutOrVersion = notifyIconVersion4
+	versioned, _, callErr := procShellNotifyIconW.Call(nimSetVersion, uintptr(unsafe.Pointer(&nid)))
+	if versioned == 0 {
+		procShellNotifyIconW.Call(nimDelete, uintptr(unsafe.Pointer(&nid)))
+		return nid, winCallError("Shell_NotifyIconW(NIM_SETVERSION)", callErr)
+	}
+	return nid, nil
+}
+
+func trayNotificationEvent(lParam uintptr) uint32 {
+	return uint32(uint16(lParam & 0xffff))
 }
 
 func (w *windowsImplementation) showMenu(hwnd uintptr) {

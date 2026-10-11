@@ -29,7 +29,7 @@ Coding app 没有出现 `coding_open` / `coding_exec` / `coding_status` / `codin
 
 **现象**
 
-Coding 或 Agent Tunnel 一直无法进入 connected 状态。
+Coding 或 Agent Tunnel 一直无法进入“已连接”，或者显示“代理不可达 / 控制面不可达 / 连接状态未知 / MCP 未就绪”。
 
 **可能原因**
 
@@ -41,11 +41,15 @@ Tunnel ID 不寻、Runtime API key 缺失/无效、出站网络被拦，或者 b
 - Runtime API key 对这条 Tunnel 有权限。
 - portable 中存在 `runtime/tunnel/current/tunnel-client.exe`。
 - 防火墙/代理允许 tunnel-client 建立出站连接。
+- “代理不可达”表示 control-plane poll 已失败，同时 CWapi 对配置的显式代理 host:port 的短 TCP 探测也失败；先检查本地代理进程与端口。
+- “控制面不可达”表示 poll 已失败，但没有显式代理，或显式代理 socket 仍可连接；这时继续检查代理上游、DNS、TLS、认证和 OpenAI 控制面连通性。
+- “连接状态未知”表示 tunnel-client 子进程仍在，但 CWapi 无法读取它的本地 health endpoint；它不是“已经连通”的同义词。
+- “MCP 未就绪”表示近期 control-plane poll 成功，但 tunnel-client 的本地 MCP readiness 检查未通过。
 - 如果 CWapi 的“网络”行选择了 HTTP 代理，确认填写的 `http://` / `https://` endpoint 实际可达。Tunnel 这条链路不依赖 Windows 系统代理或 TUN 模式；显式代理地址写错时，开启它们也不会修复该地址。
 
 **怎么修**
 
-在正确的 CWapi Tunnel 面板重新填写匹配的 Tunnel ID 和 Runtime API key。如果启用了显式 Tunnel 代理，检查折叠的“网络”设置，必要时切回“直连”。Runtime API key 不应手工写进 `cwapi.json`，CWapi 会把它存到 Windows Credential Manager。直连/HTTP 代理切换只重启对应的 tunnel-client 子进程。
+先按界面显示的连接状态定位：代理不可达先修本地代理；控制面不可达再查上游网络/认证；MCP 未就绪再查本地 MCP 目标。必要时重新填写匹配的 Tunnel ID 和 Runtime API key，或把折叠“网络”设置临时切回“直连”。Runtime API key 不应手工写进 `cwapi.json`，CWapi 会把它存到 Windows Credential Manager。直连/HTTP 代理切换只重启对应的 tunnel-client 子进程。
 
 ## Tunnel 一直重连
 
@@ -67,6 +71,26 @@ GUI 反复显示“正在重连”，或者 tunnel-client 启动后很快退出�
 **怎么修**
 
 修正这条 Tunnel 自己的配置后重新连接，不要把另一条链的 Tunnel 设置复制过来。
+
+## CWapi 进程还在，但托盘图标消失
+
+**现象**
+
+CWapi 仍在运行，Coding/Agent 也可能继续可用，但 Windows 右下角通知区域中的 CWapi 图标消失；常见触发方式是 Windows Explorer/任务栏短暂重启。
+
+**原因与修复**
+
+2.0.7 会监听 Windows 注册消息 `TaskbarCreated`；系统任务栏重新创建后，CWapi 会重新添加通知区域图标，并重新设置通知图标版本。旧版本出现该现象时需要重启 CWapi。开发/验收时可运行 `scripts/test-tray-recovery.cmd`：它只临时删除 CWapi 图标并向 CWapi 托盘窗口发送同一个 `TaskbarCreated` 消息，不会重启 Explorer，也不会停止 CWapi 进程。
+
+## CWapi 异常结束后仍有 tunnel-client 进程
+
+**现象**
+
+CWapi 已被强制结束或意外崩溃，但任务管理器里仍能看到旧的 `tunnel-client.exe`。
+
+**原因与修复**
+
+2.0.7 将每个 Tunnel 子进程加入 Windows Job Object，并启用“父进程持有的最后一个 Job 句柄关闭时终止关联进程”的规则。正常退出仍走 CWapi 自己的 Tunnel 关闭流程；强杀或崩溃时由 Windows 回收对应 Coding/Agent Tunnel 进程树。开发/验收可运行 `scripts/test-tunnel-orphan.cmd`；测试只创建并强杀一次性测试父进程，不会结束真实 CWapi 或真实 Tunnel。
 
 ## Runtime API key 错误
 

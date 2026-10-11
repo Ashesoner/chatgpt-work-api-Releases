@@ -1,4 +1,4 @@
-﻿# CWapi
+# CWapi
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
@@ -14,7 +14,7 @@ CWapi 2.0 provides two isolated bridges:
 - **Coding** lets ChatGPT Web read, edit, build, test, and operate a local Git workspace through MCP.
 - **Agent** exposes a localhost OpenAI-compatible API so compatible local software can send model requests to Web GPT through an Agent MCP bridge.
 
-Current release: **`2.0.6`**.
+Current release: **`2.0.6`**. The current fork development branch targets **`2.0.7`** (not yet released); official download links below still point to 2.0.6. The 2.0.7 stabilization work adds observed Tunnel connectivity states, independent explicit Tunnel proxy routing, branch-scoped diagnostics, Explorer/taskbar tray-icon recovery, and Windows cleanup of Tunnel children after abrupt CWapi termination.
 
 ## What is CWapi?
 

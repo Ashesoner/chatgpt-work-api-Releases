@@ -1,4 +1,4 @@
-﻿# CWapi
+# CWapi
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
@@ -14,7 +14,7 @@ CWapi 2.0 提供两条彼此隔离的链路：
 - **Coding**：ChatGPT Web 通过 MCP 操作本地 Git workspace，读取、修改、编译、测试和执行开发命令。
 - **Agent**：CWapi 在 localhost 提供 OpenAI-compatible API，本地软件把模型请求交给 Web GPT，再取得回答或 `tool_calls`。
 
-当前正式版本：**`2.0.6`**。
+当前正式版本：**`2.0.6`**。当前 fork 开发分支的下一目标版本是 **`2.0.7`**（尚未发布）；正式下载链接仍指向 2.0.6。2.0.7 的稳定性工作包括：真实 Tunnel 连通状态、Coding/Agent 独立显式代理、按分支归属的诊断提示、Explorer/任务栏重建后的托盘图标自动恢复，以及 CWapi 异常结束后由 Windows 回收 Tunnel 子进程。
 
 ## CWapi 是什么？
 

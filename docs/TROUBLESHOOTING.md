@@ -29,7 +29,7 @@ Reconnect the correct Tunnel/app. If discovery still fails, restart only the aff
 
 **Symptom**
 
-The Coding or Agent Tunnel never reaches a connected state.
+The Coding or Agent Tunnel never reaches Connected, or shows Proxy unreachable, Control plane unreachable, Connection state unknown, or MCP not ready.
 
 **Likely cause**
 
@@ -41,6 +41,10 @@ Invalid Tunnel ID, invalid/missing Runtime API key, blocked outbound connectivit
 - Runtime API key is the one authorized for that Tunnel.
 - `runtime/tunnel/current/tunnel-client.exe` exists in the portable.
 - Local firewall/proxy policy allows the tunnel client to make its outbound connection.
+- **Proxy unreachable** means control-plane polling has already failed and CWapi also cannot open a short TCP connection to the configured explicit proxy host/port.
+- **Control plane unreachable** means polling failed while no explicit proxy is configured, or the explicit proxy socket is still reachable; check upstream routing, DNS/TLS, authentication, and OpenAI control-plane reachability.
+- **Connection state unknown** means the child process is alive but CWapi cannot read its loopback health endpoint; it does not mean the Tunnel is connected.
+- **MCP not ready** means a recent control-plane poll succeeded while the tunnel-client local MCP readiness check is failing.
 - If the CWapi Network row is set to HTTP proxy, the configured `http://` / `https://` endpoint is reachable. This Tunnel path does not require Windows system proxy or TUN mode; those settings do not repair a wrong explicit endpoint.
 
 **How to fix**
@@ -67,6 +71,26 @@ The tunnel process starts but cannot remain authenticated/connected, or the loca
 **How to fix**
 
 Correct the affected Tunnel configuration and reconnect it. Do not copy one surface's Tunnel settings into the other.
+
+## CWapi is still running but its tray icon disappears
+
+**Symptom**
+
+CWapi remains alive and Coding/Agent may still work, but the CWapi notification-area icon disappears after Windows Explorer or the taskbar is recreated.
+
+**Cause and fix**
+
+2.0.7 listens for the registered Windows `TaskbarCreated` message and re-adds the notification icon after taskbar recreation, then reapplies the notification-icon version. Older builds require restarting CWapi. For development/acceptance testing, run `scripts/test-tray-recovery.cmd`: it removes only the CWapi icon temporarily and sends the same `TaskbarCreated` message to the CWapi tray window. It does not restart Explorer or stop the CWapi process.
+
+## tunnel-client remains after CWapi is terminated abruptly
+
+**Symptom**
+
+CWapi was force-terminated or crashed, but an old `tunnel-client.exe` process is still visible.
+
+**Cause and fix**
+
+2.0.7 attaches each Tunnel child to a Windows Job Object configured to terminate associated processes when the last parent-held Job handle closes. Normal shutdown still uses CWapi's explicit Tunnel close path; abrupt termination is reclaimed by Windows. For development/acceptance testing, run `scripts/test-tunnel-orphan.cmd`; it uses a disposable helper parent and does not terminate the real CWapi or real Tunnel processes.
 
 ## Runtime API key is rejected
 

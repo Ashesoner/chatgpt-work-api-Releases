@@ -36,12 +36,25 @@ test("unverified ready workspace does not invent an execution failure", async ()
   await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
 });
 
-test("successful execution can still show the advisory large ACL warning", async () => {
-  fixture.snapshot = { state: "running", coding: { state: "ready", last_execution: {
-    state: "completed", diagnostics: { access_profile: "safe", warnings: ["WINDOWS_WORKSPACE_ACL_LARGE"] },
-  } } };
+test("successful execution shows large ACL advisory as a branch-scoped warning, not an error", async () => {
+  fixture.snapshot = { state: "running", coding: {
+    state: "ready", last_execution_branch: "feature/test",
+    last_execution: { state: "completed", diagnostics: { access_profile: "safe", warnings: ["WINDOWS_WORKSPACE_ACL_LARGE"] } },
+  } };
   render(<App />);
-  const alert = await screen.findByRole("alert");
-  expect(alert.textContent).toContain("WINDOWS_WORKSPACE_ACL_LARGE");
-  expect(alert.textContent).toContain("工作区权限规则较多");
+  const status = await screen.findByRole("status");
+  expect(status.textContent).toContain("WINDOWS_WORKSPACE_ACL_LARGE");
+  expect(status.textContent).toContain("feature/test");
+  expect(status.textContent).toContain("工作区权限规则较多");
+  expect(screen.queryByRole("alert")).toBeNull();
+});
+
+test("idle stale Agent bridge is shown as dormant without a red error", async () => {
+  fixture.snapshot = { state: "running", agent_enabled: true, agent: {
+    bridge_state: "OFFLINE", active: 0, last_error: "AGENT_BRIDGE_STALE",
+  } };
+  render(<App />);
+  screen.getByRole("tab", { name: /Agent/ }).click();
+  await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+  expect(await screen.findByText("已休眠")).toBeTruthy();
 });

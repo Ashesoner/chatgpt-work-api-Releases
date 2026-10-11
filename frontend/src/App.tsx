@@ -35,7 +35,7 @@ type Snapshot = {
   codex_network_access?: boolean;
   codex_remote_git_rewrite?: boolean;
   codex?: { state?: string; executable?: string; last_error?: string };
-  coding?: { state?: string; active?: number; repositories?: string[]; last_execution?: { state?: string; error?: string; diagnostics?: { access_profile?: string; warnings?: string[]; phases?: { name: string; state: string }[] } } };
+  coding?: { state?: string; active?: number; repositories?: string[]; last_execution?: { state?: string; error?: string; diagnostics?: { access_profile?: string; warnings?: string[]; phases?: { name: string; state: string }[] } }; last_execution_target_ref?: string; last_execution_branch?: string };
   workspaces?: { repository_count?: number; repositories?: string[]; workspaces?: WorkspaceEntry[]; invalid_entries?: number };
   agent_enabled?: boolean;
   agent_provider?: { state?: string; address?: string; last_error?: string };
@@ -47,7 +47,7 @@ type Snapshot = {
   last_error?: string;
 };
 type Connections = { coding_mcp?: string; agent_mcp?: string; agent_provider?: string };
-type TunnelInfo = { enabled?: boolean; tunnel_id?: string; api_key_present?: boolean; state?: string; last_error?: string };
+type TunnelInfo = { enabled?: boolean; tunnel_id?: string; api_key_present?: boolean; state?: string; connection_state?: string; last_error?: string };
 type TunnelSnapshot = Omit<TunnelInfo, "enabled"> & { configured?: boolean };
 type TunnelProfile = { id: string; name: string; tunnel_id: string; api_key_present: boolean; active: boolean; state: string };
 type TunnelNetworkInfo = { mode: "direct" | "http_proxy"; http_proxy: string };
@@ -66,6 +66,7 @@ function normalizeTunnel(value?: TunnelSnapshot): TunnelInfo {
     tunnel_id: value?.tunnel_id,
     api_key_present: value?.api_key_present,
     state: value?.state,
+    connection_state: value?.connection_state,
     last_error: value?.last_error,
   };
 }
@@ -75,23 +76,41 @@ function errorCode(value: unknown) {
   return text.match(/[A-Z][A-Z0-9_]{2,}/)?.[0] || (text.trim() ? "OPERATION_FAILED" : "");
 }
 
+function agentBridgeDisplayState(snapshot: Snapshot) {
+  const state = snapshot.agent?.bridge_state || "offline";
+  const staleIdle = state.toLowerCase() === "offline"
+    && errorCode(snapshot.agent?.last_error) === "AGENT_BRIDGE_STALE"
+    && (snapshot.agent?.active ?? 0) === 0;
+  return staleIdle ? "idle" : state;
+}
+
 function snapshotIssue(page: Page, snapshot: Snapshot, tunnel: TunnelInfo) {
   const candidates: unknown[] = [tunnel.last_error];
   if (snapshot.mcp?.state === "failed") candidates.push(snapshot.mcp.error);
   if (snapshot.state === "failed") candidates.push(snapshot.last_error);
   if (page === "coding" && ["failed", "unavailable"].includes(snapshot.codex?.state || "")) candidates.push(snapshot.codex?.last_error);
   if (page === "coding" && snapshot.coding?.last_execution?.state === "failed") candidates.push(snapshot.coding.last_execution.error);
-  if (page === "coding") candidates.push(snapshot.coding?.last_execution?.diagnostics?.warnings?.[0]);
   if (page === "agent") {
     if (snapshot.agent_provider?.state === "failed") candidates.push(snapshot.agent_provider.last_error);
-    if (snapshot.agent_enabled && snapshot.agent?.bridge_state === "OFFLINE") candidates.push(snapshot.agent.last_error);
+    const bridgeError = errorCode(snapshot.agent?.last_error);
+    const staleIdle = bridgeError === "AGENT_BRIDGE_STALE" && (snapshot.agent?.active ?? 0) === 0;
+    if (snapshot.agent_enabled && snapshot.agent?.bridge_state === "OFFLINE" && !staleIdle) candidates.push(snapshot.agent.last_error);
   }
   return candidates.map(errorCode).find(Boolean) || "";
 }
 
+function snapshotWarning(page: Page, snapshot: Snapshot) {
+  if (page !== "coding") return null;
+  const warning = snapshot.coding?.last_execution?.diagnostics?.warnings?.[0];
+  if (!warning) return null;
+  const branch = snapshot.coding?.last_execution_branch || snapshot.coding?.last_execution_target_ref || "";
+  const scope = branch ? ` · ${branch}` : "";
+  if (warning === "WINDOWS_WORKSPACE_ACL_LARGE") return { label: `SAFE${scope} · 工作区权限规则较多`, code: warning };
+  return { label: `Coding${scope} · 提示`, code: warning };
+}
+
 function executionFailurePhase(snapshot: Snapshot) {
   const outcome = snapshot.coding?.last_execution;
-	if (outcome?.diagnostics?.warnings?.includes("WINDOWS_WORKSPACE_ACL_LARGE") && outcome.state !== "failed") return "SAFE · 工作区权限规则较多";
   if (outcome?.state !== "failed") return "";
   const phase = [...(outcome.diagnostics?.phases || [])].reverse().find((item) => item.state === "failed")?.name;
   const labels: Record<string, string> = {
@@ -104,15 +123,16 @@ function executionFailurePhase(snapshot: Snapshot) {
 
 function statusClass(value?: string) {
   const state = (value || "unknown").toLowerCase();
-  if (["running", "ready", "active", "completed"].includes(state)) return "ok";
-  if (["busy", "claimed", "queued", "starting", "restarting"].includes(state)) return "busy";
-  if (["failed", "unavailable", "offline", "blocked", "missing_credentials"].includes(state)) return "bad";
+  if (["running", "ready", "active", "completed", "connected"].includes(state)) return "ok";
+  if (["busy", "claimed", "queued", "starting", "restarting", "mcp_unready", "health_unavailable"].includes(state)) return "busy";
+  if (["failed", "unavailable", "offline", "blocked", "missing_credentials", "proxy_unreachable", "control_plane_unreachable"].includes(state)) return "bad";
   return "muted";
 }
 
 function stateLabel(value?: string) {
   switch ((value || "unknown").toLowerCase()) {
     case "running": return "运行中";
+    case "connected": return "已连接";
     case "ready": return "就绪";
     case "active": return "活动";
     case "completed": return "已完成";
@@ -128,7 +148,12 @@ function stateLabel(value?: string) {
     case "offline": return "离线";
     case "blocked": return "已阻止";
     case "missing_credentials": return "缺少凭据";
+    case "proxy_unreachable": return "代理不可达";
+    case "control_plane_unreachable": return "控制面不可达";
+    case "mcp_unready": return "MCP 未就绪";
+    case "health_unavailable": return "连接状态未知";
     case "disabled": return "未启用";
+    case "idle": return "已休眠";
     case "unknown": return "未知";
     default: return value || "未知";
   }
@@ -314,15 +339,16 @@ export default function App() {
 
   const access = snapshot.codex_access_profile || "safe";
   const remoteGitRewrite = Boolean(snapshot.codex_remote_git_rewrite);
-  const bridge = snapshot.agent?.bridge_state || "offline";
+  const bridge = agentBridgeDisplayState(snapshot);
   const workspaceEntries = snapshot.workspaces?.workspaces || [];
   const issue = actionError || refreshError || snapshotIssue(page, snapshot, page === "coding" ? codingTunnel : agentTunnel);
+  const warning = snapshotWarning(page, snapshot);
   return (
     <main className="shell">
       <header className="titlebar">
         <div className="brand-row">
           <div className="logo">CW</div>
-          <div><strong>CWapi</strong><span>2.0.6</span></div>
+          <div><strong>CWapi</strong><span>2.0.7</span></div>
         </div>
         <button className="window-button" onClick={WindowHide} aria-label="缩小到托盘" title="缩小到托盘">×</button>
       </header>
@@ -374,6 +400,7 @@ export default function App() {
       </div>
 
       {issue && <div className="current-error" role="alert"><span>{page === "coding" ? executionFailurePhase(snapshot) || "当前错误" : "当前错误"}</span><code>{issue}</code></div>}
+      {!issue && warning && <div className="current-warning" role="status"><span>{warning.label}</span><code>{warning.code}</code></div>}
       <footer>Coding 与 Agent 相互独立，分别在对应页面配置和管理。</footer>
 
       {workspaceManagerOpen && (
@@ -491,6 +518,23 @@ function AgentPage({ snapshot, connections, profiles, tunnelNetwork, working, br
   );
 }
 
+function tunnelHTTPProxy(value: string) {
+  const raw = value.trim();
+  try {
+    const proxy = new URL(raw);
+    if (!["http:", "https:"].includes(proxy.protocol) || !proxy.hostname) return null;
+    if (proxy.username || proxy.password || proxy.search || proxy.hash) return null;
+    if (proxy.pathname && proxy.pathname !== "/") return null;
+    if (proxy.port) {
+      const port = Number(proxy.port);
+      if (!Number.isInteger(port) || port < 1 || port > 65535) return null;
+    }
+    return proxy;
+  } catch {
+    return null;
+  }
+}
+
 function TunnelNetworkInline({ page, network, working, onSave }: {
   page: Page;
   network: TunnelNetworkInfo;
@@ -520,15 +564,11 @@ function TunnelNetworkInline({ page, network, working, onSave }: {
 
   let summary = "直连";
   if (network.mode === "http_proxy") {
-    try {
-      const proxy = new URL(network.http_proxy);
-      summary = `HTTP代理${proxy.port ? ` · ${proxy.port}` : ""}`;
-    } catch {
-      summary = "HTTP代理";
-    }
+    const proxy = tunnelHTTPProxy(network.http_proxy);
+    summary = proxy ? `HTTP · ${proxy.host}` : "HTTP代理";
   }
   const normalizedProxy = httpProxy.trim();
-  const valid = mode === "direct" || /^https?:\/\/\S+$/i.test(normalizedProxy);
+  const valid = mode === "direct" || tunnelHTTPProxy(normalizedProxy) !== null;
   const changed = mode !== network.mode || (mode === "http_proxy" && normalizedProxy !== network.http_proxy);
 
   return (

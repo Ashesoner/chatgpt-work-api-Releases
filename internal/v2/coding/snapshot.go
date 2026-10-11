@@ -7,10 +7,12 @@ import (
 )
 
 type RuntimeSnapshot struct {
-	State         string                 `json:"state"`
-	Active        int                    `json:"active"`
-	Repositories  []string               `json:"repositories,omitempty"`
-	LastExecution *executiondiag.Outcome `json:"last_execution,omitempty"`
+	State               string                 `json:"state"`
+	Active              int                    `json:"active"`
+	Repositories        []string               `json:"repositories,omitempty"`
+	LastExecution       *executiondiag.Outcome `json:"last_execution,omitempty"`
+	LastExecutionTarget string                 `json:"last_execution_target_ref,omitempty"`
+	LastExecutionBranch string                 `json:"last_execution_branch,omitempty"`
 }
 
 func (s *Service) RuntimeSnapshot() RuntimeSnapshot {
@@ -22,6 +24,7 @@ func (s *Service) RuntimeSnapshot() RuntimeSnapshot {
 	seen := make(map[string]struct{})
 	active := 0
 	var lastExecution *executiondiag.Outcome
+	var lastExecutionTarget, lastExecutionBranch string
 	for key, owner := range s.active {
 		if owner == "" {
 			continue
@@ -38,6 +41,8 @@ func (s *Service) RuntimeSnapshot() RuntimeSnapshot {
 			record.mu.Lock()
 			if record.lastExecution != nil && (lastExecution == nil || record.lastExecution.At > lastExecution.At) {
 				lastExecution = record.lastExecution
+				lastExecutionTarget = record.targetRef
+				lastExecutionBranch = record.currentBranch
 			}
 			record.mu.Unlock()
 		}
@@ -53,5 +58,8 @@ func (s *Service) RuntimeSnapshot() RuntimeSnapshot {
 	} else if active > 0 {
 		state = "active"
 	}
-	return RuntimeSnapshot{State: state, Active: active, Repositories: repositories, LastExecution: lastExecution}
+	return RuntimeSnapshot{
+		State: state, Active: active, Repositories: repositories, LastExecution: lastExecution,
+		LastExecutionTarget: lastExecutionTarget, LastExecutionBranch: lastExecutionBranch,
+	}
 }

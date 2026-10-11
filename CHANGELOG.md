@@ -1,4 +1,16 @@
-﻿# Changelog
+# Changelog
+
+## 2.0.7 — Development
+
+2.0.7 is the fork stabilization target built on the upstream 2.0.6 integration. It is not a published upstream release.
+
+- Product identity is moved to 2.0.7 while the unchanged `cwapi.config.v3` payload remains at its 2.0.6-compatible version marker so an older 2.0.6 executable can still read the same core config when rolling back.
+- Coding and Agent Tunnel status now distinguishes child-process lifecycle from observed control-plane connectivity. CWapi reads the bundled tunnel-client's loopback health/metrics endpoint; it does not add a second OpenAI polling loop.
+- Tunnel connection status can report starting, connected, MCP-not-ready, proxy-unreachable, control-plane-unreachable, or health-unavailable. Explicit-proxy diagnosis probes only the configured proxy socket after a control-plane poll failure has already been observed.
+- Coding execution warnings are separated from true failures in the GUI. Advisory Windows ACL warnings use a non-error presentation and identify the branch associated with the most recent execution when available. An idle `AGENT_BRIDGE_STALE` is presented as a dormant/disconnected Agent bridge instead of a red failure.
+- The compact Tunnel network row now shows the explicit proxy host/port and validates the address with the same HTTP/HTTPS constraints as the backend.
+- The Windows tray icon now restores itself after Explorer/taskbar recreation by handling the registered `TaskbarCreated` message and re-adding the notification icon. Each add also applies `NIM_SETVERSION` with `NOTIFYICON_VERSION_4` as recommended by Microsoft.
+- Windows Tunnel children are now attached to a kill-on-close Job Object. Normal shutdown still stops them explicitly; abrupt CWapi termination also causes Windows to reclaim the Coding/Agent tunnel-client process tree instead of leaving orphan processes.
 
 ## Fork integration additions — `feature/upstream-2.0.6-integration`
 

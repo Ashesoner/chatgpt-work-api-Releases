@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -65,6 +66,13 @@ func TestReconfigureHTTPProxyRestartsWithExplicitProxy(t *testing.T) {
 	}
 	if err := manager.Start(context.Background()); err != nil {
 		t.Fatal(err)
+	}
+	profile, err := os.ReadFile(filepath.Join(manager.profileDirectory, profileFileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(profile), "url_file:") || !strings.Contains(string(profile), "health.url") {
+		t.Fatalf("profile missing health url_file: %s", profile)
 	}
 	if err := manager.ReconfigureHTTPProxy(context.Background(), "http://127.0.0.1:7897"); err != nil {
 		t.Fatal(err)

@@ -178,8 +178,14 @@ func (a *App) tunnelProfileInfosLocked(state tunnelprofiles.State, agent bool) (
 	snapshot := a.RuntimeSnapshot()
 	if agent {
 		activeState = snapshot.AgentOpenAITunnel.State
+		if snapshot.AgentOpenAITunnel.ConnectionState != "" {
+			activeState = snapshot.AgentOpenAITunnel.ConnectionState
+		}
 	} else {
 		activeState = snapshot.OpenAITunnel.State
+		if snapshot.OpenAITunnel.ConnectionState != "" {
+			activeState = snapshot.OpenAITunnel.ConnectionState
+		}
 	}
 	result := make([]TunnelProfileInfo, 0, len(surface.Profiles))
 	for _, profile := range surface.Profiles {

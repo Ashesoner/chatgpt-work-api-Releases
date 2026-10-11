@@ -114,6 +114,8 @@ button { -webkit-tap-highlight-color: transparent; }
 
 .current-error { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 2px 4px; padding: 6px 8px; border: 1px solid rgba(220, 78, 95, .22); border-radius: 8px; background: rgba(121, 39, 56, .11); color: #d88896; font-size: 9px; }
 .current-error code { overflow: hidden; color: #ff9eaa; font: 9px "Cascadia Code", Consolas, monospace; text-overflow: ellipsis; white-space: nowrap; }
+.current-warning { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 2px 4px; padding: 6px 8px; border: 1px solid rgba(214, 164, 72, .28); border-radius: 8px; background: rgba(123, 88, 28, .12); color: #d7b36c; font-size: 9px; }
+.current-warning code { overflow: hidden; color: #e7c77f; font: 9px "Cascadia Code", Consolas, monospace; text-overflow: ellipsis; white-space: nowrap; }
 .switch { position: relative; width: 34px; height: 19px; }
 .switch input { width: 0; height: 0; opacity: 0; }
 .switch span { position: absolute; inset: 0; border-radius: 999px; background: #272d43; cursor: pointer; transition: .2s; }
