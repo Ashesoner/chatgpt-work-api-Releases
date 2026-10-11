@@ -12,6 +12,7 @@ vi.mock("../wailsjs/go/main/App", () => ({
   DeleteCodingTunnelProfile: vi.fn(), DeleteWorkspace: vi.fn(), OpenWorkspaceFolder: vi.fn(),
   RegenerateAgentAPIKey: vi.fn(), SaveAgentTunnelProfile: vi.fn(), SaveCodingTunnelProfile: vi.fn(),
   SetAgentEnabled: vi.fn(), UpdateCodexAccessProfile: vi.fn(), UpdateCodexNetworkAccess: vi.fn(), UpdateCodexRemoteGitRewrite: vi.fn(),
+  UpdateCodingTunnelNetwork: vi.fn(), UpdateAgentTunnelNetwork: vi.fn(),
 }));
 vi.mock("../wailsjs/runtime/runtime", () => ({ WindowHide: vi.fn() }));
 afterEach(cleanup);

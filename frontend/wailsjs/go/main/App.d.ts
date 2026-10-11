@@ -27,3 +27,5 @@ export function DeleteAgentTunnelProfile(arg1:string):Promise<any>;
 export function DeleteCodingTunnelProfile(arg1:string):Promise<any>;
 export function SaveAgentTunnelProfile(arg1:string,arg2:string,arg3:string,arg4:string):Promise<any>;
 export function SaveCodingTunnelProfile(arg1:string,arg2:string,arg3:string,arg4:string):Promise<any>;
+export function UpdateAgentTunnelNetwork(arg1:string,arg2:string):Promise<any>;
+export function UpdateCodingTunnelNetwork(arg1:string,arg2:string):Promise<any>;

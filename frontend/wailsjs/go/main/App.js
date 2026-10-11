@@ -29,3 +29,5 @@ export function DeleteAgentTunnelProfile(arg1) { return window['go']['main']['Ap
 export function DeleteCodingTunnelProfile(arg1) { return window['go']['main']['App']['DeleteCodingTunnelProfile'](arg1); }
 export function SaveAgentTunnelProfile(arg1, arg2, arg3, arg4) { return window['go']['main']['App']['SaveAgentTunnelProfile'](arg1, arg2, arg3, arg4); }
 export function SaveCodingTunnelProfile(arg1, arg2, arg3, arg4) { return window['go']['main']['App']['SaveCodingTunnelProfile'](arg1, arg2, arg3, arg4); }
+export function UpdateAgentTunnelNetwork(arg1, arg2) { return window['go']['main']['App']['UpdateAgentTunnelNetwork'](arg1, arg2); }
+export function UpdateCodingTunnelNetwork(arg1, arg2) { return window['go']['main']['App']['UpdateCodingTunnelNetwork'](arg1, arg2); }

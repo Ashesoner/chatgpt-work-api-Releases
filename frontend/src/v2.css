@@ -73,6 +73,16 @@ button { -webkit-tap-highlight-color: transparent; }
 .account-add { width: 100%; margin-top: 8px; }
 .account-editor { margin-top: 10px; padding-top: 10px; border-top: 1px solid #171c2e; }
 .account-empty { padding: 10px; }
+.network-inline { margin: -2px 0 8px; }
+.network-inline-summary { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 26px; padding: 3px 6px; border-radius: 7px; background: #0b0e1a; }
+.network-inline-summary > span { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.network-inline-summary small { color: #66708f; font-size: 9px; }
+.network-inline-summary strong { overflow: hidden; color: #aeb7d7; font-size: 9px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.network-inline-summary button { flex: 0 0 auto; border: 0; padding: 3px 5px; background: transparent; color: #7f89ad; cursor: pointer; font-size: 9px; }
+.network-inline-summary button:hover { color: #fff; }
+.network-inline-editor { margin-top: 5px; padding: 7px; border: 1px solid #1c2238; border-radius: 8px; background: #0b0e1a; }
+.network-inline-editor .segmented { margin-bottom: 5px; }
+.network-inline-editor .form-note { margin-top: 5px; }
 .editor-close { border: 0; background: transparent; color: #7f89ad; }
 .tunnel-panel { margin-top: 9px; padding-top: 10px; border-top: 1px solid #171c2e; }
 .tunnel-panel-title { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
@@ -80,6 +90,7 @@ button { -webkit-tap-highlight-color: transparent; }
 .tunnel-input { width: 100%; margin-top: 6px; outline: none; border: 1px solid #28304d; border-radius: 8px; padding: 8px 9px; background: #0b0e1b; color: #dbe2ff; font: 10px "Cascadia Code", Consolas, monospace; }
 .tunnel-input:focus { border-color: #5966a8; }
 .tunnel-input::placeholder { color: #59617d; }
+.form-note { display: block; margin-top: 7px; color: #737d9f; font-size: 9px; line-height: 1.5; }
 .actions { display: flex; gap: 7px; margin-top: 7px; }
 .actions button { flex: 1; }
 .segmented { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; margin-bottom: 10px; padding: 4px; border-radius: 10px; background: #0b0e1b; }

@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/AAAYNMMM/CWapi/internal/credentials"
+	"github.com/AAAYNMMM/CWapi/internal/tunnelnetwork"
 	"github.com/AAAYNMMM/CWapi/internal/v2/agentbroker"
 	"github.com/AAAYNMMM/CWapi/internal/v2/codextoolhost"
 	"github.com/AAAYNMMM/CWapi/internal/v2/coding"
@@ -27,6 +28,11 @@ func NewDefault(configPath string) (*Service, error) {
 		return nil, err
 	}
 	cfg, err := v2config.LoadOrCreate(resolvedPath)
+	if err != nil {
+		return nil, err
+	}
+	networkPath := tunnelnetwork.PathForConfig(resolvedPath)
+	networkState, err := tunnelnetwork.LoadOrDefault(networkPath)
 	if err != nil {
 		return nil, err
 	}
@@ -57,13 +63,13 @@ func NewDefault(configPath string) (*Service, error) {
 		return nil, err
 	}
 	codingTunnelURL := "http://127.0.0.1:" + strconv.Itoa(cfg.MCP.Port) + "/mcp/coding/" + cfg.MCP.CodingToken
-	tunnelManager, err := tunnel.NewWithProfile(dataRoot, discoverTunnelExecutable(dataRoot), cfg.Tunnel, codingTunnelAPIKey, codingTunnelURL, "coding")
+	tunnelManager, err := tunnel.NewWithProfileAndProxy(dataRoot, discoverTunnelExecutable(dataRoot), cfg.Tunnel, codingTunnelAPIKey, codingTunnelURL, "coding", tunnelnetwork.ProxyURL(networkState.Coding))
 	if err != nil {
 		return nil, err
 	}
 	deps.Tunnel = tunnelManager
 	agentTunnelURL := "http://127.0.0.1:" + strconv.Itoa(cfg.MCP.Port) + "/mcp/agent/" + cfg.MCP.AgentToken
-	agentTunnelManager, err := tunnel.NewWithProfile(dataRoot, discoverTunnelExecutable(dataRoot), cfg.AgentTunnel, agentTunnelAPIKey, agentTunnelURL, "agent")
+	agentTunnelManager, err := tunnel.NewWithProfileAndProxy(dataRoot, discoverTunnelExecutable(dataRoot), cfg.AgentTunnel, agentTunnelAPIKey, agentTunnelURL, "agent", tunnelnetwork.ProxyURL(networkState.Agent))
 	if err != nil {
 		return nil, err
 	}
@@ -79,7 +85,15 @@ func NewDefault(configPath string) (*Service, error) {
 		deps.AgentBroker = broker
 		deps.AgentProvider = provider
 	}
-	return newConfigured(resolvedPath, cfg, deps)
+	service, err := newConfigured(resolvedPath, cfg, deps)
+	if err != nil {
+		return nil, err
+	}
+	service.mu.Lock()
+	service.tunnelNetworkPath = networkPath
+	service.tunnelNetwork = networkState
+	service.mu.Unlock()
+	return service, nil
 }
 
 func readTunnelCredentials(cfg v2config.Config, reader tunnelCredentialReader) (string, string, error) {

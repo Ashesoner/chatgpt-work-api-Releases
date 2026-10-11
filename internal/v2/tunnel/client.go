@@ -14,6 +14,7 @@ import (
 
 	"github.com/AAAYNMMM/CWapi/internal/childenv"
 	"github.com/AAAYNMMM/CWapi/internal/processlaunch"
+	"github.com/AAAYNMMM/CWapi/internal/tunnelnetwork"
 	v2config "github.com/AAAYNMMM/CWapi/internal/v2/config"
 )
 
@@ -67,6 +68,7 @@ type Manager struct {
 	executable       string
 	config           v2config.TunnelConfig
 	apiKey           string
+	httpProxy        string
 	mcpURL           string
 	start            processStarter
 
@@ -82,17 +84,21 @@ type Manager struct {
 }
 
 func New(dataRoot string, executable string, config v2config.TunnelConfig, apiKey string, mcpURL string) (*Manager, error) {
-	return newManager(dataRoot, executable, config, apiKey, mcpURL, "")
+	return newManager(dataRoot, executable, config, apiKey, mcpURL, "", "")
 }
 
 // NewWithProfile creates an independent tunnel-client profile and working
 // directory. Separate profiles are required when Coding and Agent each use a
 // different OpenAI tunnel process.
 func NewWithProfile(dataRoot string, executable string, config v2config.TunnelConfig, apiKey string, mcpURL string, profileName string) (*Manager, error) {
-	return newManager(dataRoot, executable, config, apiKey, mcpURL, profileName)
+	return newManager(dataRoot, executable, config, apiKey, mcpURL, profileName, "")
 }
 
-func newManager(dataRoot string, executable string, config v2config.TunnelConfig, apiKey string, mcpURL string, profileName string) (*Manager, error) {
+func NewWithProfileAndProxy(dataRoot string, executable string, config v2config.TunnelConfig, apiKey string, mcpURL string, profileName string, httpProxy string) (*Manager, error) {
+	return newManager(dataRoot, executable, config, apiKey, mcpURL, profileName, httpProxy)
+}
+
+func newManager(dataRoot string, executable string, config v2config.TunnelConfig, apiKey string, mcpURL string, profileName string, httpProxy string) (*Manager, error) {
 	if err := v2config.ValidateTunnel(config); err != nil {
 		return nil, err
 	}
@@ -109,6 +115,11 @@ func newManager(dataRoot string, executable string, config v2config.TunnelConfig
 			return nil, err
 		}
 	}
+	if httpProxy != "" {
+		if err := tunnelnetwork.ValidateHTTPProxy(httpProxy); err != nil {
+			return nil, err
+		}
+	}
 	if config.Enabled && strings.TrimSpace(mcpURL) == "" {
 		return nil, errors.New("OPENAI_TUNNEL_MCP_URL_REQUIRED")
 	}
@@ -119,7 +130,7 @@ func newManager(dataRoot string, executable string, config v2config.TunnelConfig
 	return &Manager{
 		dataRoot: dataRoot, profileDirectory: profileDirectory, profileName: profileName,
 		executable: strings.TrimSpace(executable), config: config,
-		apiKey: apiKey, mcpURL: strings.TrimSpace(mcpURL), start: startProcess,
+		apiKey: apiKey, httpProxy: httpProxy, mcpURL: strings.TrimSpace(mcpURL), start: startProcess,
 		snapshot: Snapshot{
 			State:         initialState(config.Enabled),
 			Configured:    config.Enabled,
@@ -203,7 +214,7 @@ func (m *Manager) launchLocked() error {
 		return fmt.Errorf("OPENAI_TUNNEL_PROFILE_WRITE_FAILED: %w", err)
 	}
 	arguments := []string{"run", "--profile-file", filepath.Join(m.profileDirectory, profileFileName)}
-	child, err := m.start(m.executable, arguments, tunnelEnvironment(m.apiKey), m.profileDirectory)
+	child, err := m.start(m.executable, arguments, tunnelEnvironment(m.apiKey, m.httpProxy), m.profileDirectory)
 	if err != nil {
 		m.snapshot = m.configuredSnapshot("failed", "OPENAI_TUNNEL_START_FAILED")
 		return fmt.Errorf("OPENAI_TUNNEL_START_FAILED: %w", err)
@@ -275,11 +286,33 @@ func (m *Manager) Reconfigure(ctx context.Context, config v2config.TunnelConfig,
 	if m == nil {
 		return errors.New("OPENAI_TUNNEL_UNAVAILABLE")
 	}
+	m.mu.RLock()
+	httpProxy := m.httpProxy
+	m.mu.RUnlock()
+	return m.reconfigure(ctx, config, apiKey, httpProxy)
+}
+
+func (m *Manager) ReconfigureHTTPProxy(ctx context.Context, httpProxy string) error {
+	if m == nil {
+		return errors.New("OPENAI_TUNNEL_UNAVAILABLE")
+	}
+	m.mu.RLock()
+	config, apiKey := m.config, m.apiKey
+	m.mu.RUnlock()
+	return m.reconfigure(ctx, config, apiKey, httpProxy)
+}
+
+func (m *Manager) reconfigure(ctx context.Context, config v2config.TunnelConfig, apiKey string, httpProxy string) error {
 	if err := v2config.ValidateTunnel(config); err != nil {
 		return err
 	}
 	if apiKey != "" {
 		if err := validateAPIKey(apiKey); err != nil {
+			return err
+		}
+	}
+	if httpProxy != "" {
+		if err := tunnelnetwork.ValidateHTTPProxy(httpProxy); err != nil {
 			return err
 		}
 	}
@@ -295,7 +328,7 @@ func (m *Manager) Reconfigure(ctx context.Context, config v2config.TunnelConfig,
 		m.mu.Unlock()
 		return errors.New("OPENAI_TUNNEL_CLOSED")
 	}
-	oldConfig, oldKey := m.config, m.apiKey
+	oldConfig, oldKey, oldProxy := m.config, m.apiKey, m.httpProxy
 	m.restartToken++
 	run := m.process
 	m.process = nil
@@ -303,7 +336,7 @@ func (m *Manager) Reconfigure(ctx context.Context, config v2config.TunnelConfig,
 
 	if err := stopActiveProcess(ctx, run); err != nil {
 		m.mu.Lock()
-		m.config, m.apiKey = oldConfig, oldKey
+		m.config, m.apiKey, m.httpProxy = oldConfig, oldKey, oldProxy
 		state := initialState(oldConfig.Enabled)
 		if run != nil {
 			select {
@@ -319,7 +352,7 @@ func (m *Manager) Reconfigure(ctx context.Context, config v2config.TunnelConfig,
 	}
 
 	m.mu.Lock()
-	m.config, m.apiKey = config, apiKey
+	m.config, m.apiKey, m.httpProxy = config, apiKey, httpProxy
 	m.restartCount = 0
 	m.snapshot = m.configuredSnapshot(initialState(config.Enabled), "")
 	m.mu.Unlock()
@@ -331,7 +364,7 @@ func (m *Manager) Reconfigure(ctx context.Context, config v2config.TunnelConfig,
 		m.restartToken++
 		failedRun := m.process
 		m.process = nil
-		m.config, m.apiKey = oldConfig, oldKey
+		m.config, m.apiKey, m.httpProxy = oldConfig, oldKey, oldProxy
 		m.restartCount = 0
 		m.snapshot = m.configuredSnapshot(initialState(oldConfig.Enabled), "")
 		m.mu.Unlock()
@@ -454,12 +487,15 @@ func isRegularFile(path string) bool {
 	return err == nil && info.Mode().IsRegular()
 }
 
-func tunnelEnvironment(apiKey string) []string {
+func tunnelEnvironment(apiKey string, httpProxy string) []string {
 	// The tunnel process receives the same bounded platform environment as
-	// other CWapi children, plus the one secret it must use for control-plane
-	// authentication. Do not inherit arbitrary host credentials or debug flags.
+	// other CWapi children, plus explicit values required by the control plane.
+	// Do not inherit arbitrary host credentials, proxy variables or debug flags.
 	environment := append([]string(nil), childenv.Canonical()...)
 	environment = append(environment, "CONTROL_PLANE_API_KEY="+apiKey)
+	if httpProxy != "" {
+		environment = append(environment, "CONTROL_PLANE_HTTP_PROXY="+httpProxy)
+	}
 	return environment
 }
 

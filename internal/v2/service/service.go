@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/AAAYNMMM/CWapi/internal/tunnelnetwork"
 	"github.com/AAAYNMMM/CWapi/internal/v2/agentbroker"
 	"github.com/AAAYNMMM/CWapi/internal/v2/codextoolhost"
 	"github.com/AAAYNMMM/CWapi/internal/v2/coding"
@@ -45,6 +46,10 @@ type TunnelReconfigurer interface {
 	Reconfigure(context.Context, v2config.TunnelConfig, string) error
 }
 
+type TunnelNetworkReconfigurer interface {
+	ReconfigureHTTPProxy(context.Context, string) error
+}
+
 type Dependencies struct {
 	Coding          mcpserver.CodingService
 	CodingLifecycle CodingLifecycle
@@ -72,6 +77,8 @@ type Snapshot struct {
 	Agent                 agentbroker.Snapshot          `json:"agent"`
 	OpenAITunnel          tunnel.Snapshot               `json:"openai_tunnel"`
 	AgentOpenAITunnel     tunnel.Snapshot               `json:"agent_openai_tunnel"`
+	CodingTunnelNetwork   tunnelnetwork.Endpoint        `json:"coding_tunnel_network"`
+	AgentTunnelNetwork    tunnelnetwork.Endpoint        `json:"agent_tunnel_network"`
 	LastError             string                        `json:"last_error,omitempty"`
 }
 
@@ -79,21 +86,23 @@ type Service struct {
 	mu          sync.RWMutex
 	lifecycleMu sync.Mutex
 
-	configPath      string
-	config          v2config.Config
-	mcp             *mcpserver.Runtime
-	codingLifecycle CodingLifecycle
-	codingPolicy    CodingPolicy
-	codingSnapshot  func() coding.RuntimeSnapshot
-	workspaceIndex  func() workspace.IndexSnapshot
-	codexProbe      func() codextoolhost.RuntimeSnapshot
-	agentBroker     *agentbroker.Broker
-	agentProvider   AgentProviderLifecycle
-	tunnel          TunnelLifecycle
-	agentTunnel     TunnelLifecycle
-	state           string
-	lastError       string
-	closed          bool
+	configPath        string
+	config            v2config.Config
+	tunnelNetworkPath string
+	tunnelNetwork     tunnelnetwork.State
+	mcp               *mcpserver.Runtime
+	codingLifecycle   CodingLifecycle
+	codingPolicy      CodingPolicy
+	codingSnapshot    func() coding.RuntimeSnapshot
+	workspaceIndex    func() workspace.IndexSnapshot
+	codexProbe        func() codextoolhost.RuntimeSnapshot
+	agentBroker       *agentbroker.Broker
+	agentProvider     AgentProviderLifecycle
+	tunnel            TunnelLifecycle
+	agentTunnel       TunnelLifecycle
+	state             string
+	lastError         string
+	closed            bool
 }
 
 func New(configPath string, deps Dependencies) (*Service, error) {
@@ -154,6 +163,7 @@ func newConfigured(configPath string, cfg v2config.Config, deps Dependencies) (*
 	codingPolicy, _ := deps.Coding.(CodingPolicy)
 	return &Service{
 		configPath: configPath, config: cfg, mcp: gateway,
+		tunnelNetworkPath: tunnelnetwork.PathForConfig(configPath), tunnelNetwork: tunnelnetwork.Default(),
 		codingLifecycle: deps.CodingLifecycle, codingPolicy: codingPolicy, codingSnapshot: deps.CodingSnapshot,
 		workspaceIndex: deps.WorkspaceIndex, codexProbe: deps.CodexProbe,
 		agentBroker: deps.AgentBroker, agentProvider: deps.AgentProvider,
@@ -286,6 +296,7 @@ func (s *Service) Snapshot() Snapshot {
 	s.mu.RLock()
 	state, lastError := s.state, s.lastError
 	cfg := s.config
+	tunnelNetwork := s.tunnelNetwork
 	s.mu.RUnlock()
 	provider := agentbroker.ProviderSnapshot{State: "disabled"}
 	broker := agentbroker.Snapshot{BridgeState: "OFFLINE"}
@@ -323,8 +334,81 @@ func (s *Service) Snapshot() Snapshot {
 		CodexRemoteGitRewrite: cfg.Codex.RemoteGitRewrite,
 		Codex:                 codexState, Coding: codingState, Workspaces: workspaceState,
 		AgentEnabled: cfg.Agent.Enabled, AgentProvider: provider, Agent: broker,
-		OpenAITunnel: openAITunnel, AgentOpenAITunnel: agentOpenAITunnel, LastError: lastError,
+		OpenAITunnel: openAITunnel, AgentOpenAITunnel: agentOpenAITunnel,
+		CodingTunnelNetwork: tunnelNetwork.Coding, AgentTunnelNetwork: tunnelNetwork.Agent, LastError: lastError,
 	}
+}
+
+func (s *Service) TunnelNetwork() tunnelnetwork.State {
+	if s == nil {
+		return tunnelnetwork.Default()
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.tunnelNetwork
+}
+
+func (s *Service) UpdateCodingTunnelNetwork(endpoint tunnelnetwork.Endpoint) (tunnelnetwork.State, error) {
+	return s.updateTunnelNetwork(endpoint, false)
+}
+
+func (s *Service) UpdateAgentTunnelNetwork(endpoint tunnelnetwork.Endpoint) (tunnelnetwork.State, error) {
+	return s.updateTunnelNetwork(endpoint, true)
+}
+
+func (s *Service) updateTunnelNetwork(endpoint tunnelnetwork.Endpoint, agent bool) (tunnelnetwork.State, error) {
+	if s == nil {
+		return tunnelnetwork.State{}, errors.New("V2_SERVICE_UNAVAILABLE")
+	}
+	if err := tunnelnetwork.ValidateEndpoint(endpoint); err != nil {
+		return s.TunnelNetwork(), err
+	}
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+	if s.closed {
+		return s.TunnelNetwork(), errors.New("V2_SERVICE_CLOSED")
+	}
+
+	s.mu.RLock()
+	before := s.tunnelNetwork
+	networkPath := s.tunnelNetworkPath
+	var lifecycle TunnelLifecycle = s.tunnel
+	if agent {
+		lifecycle = s.agentTunnel
+	}
+	s.mu.RUnlock()
+	reconfigurer, ok := lifecycle.(TunnelNetworkReconfigurer)
+	if !ok || reconfigurer == nil {
+		if agent {
+			return before, errors.New("V2_AGENT_TUNNEL_NETWORK_RECONFIGURE_UNAVAILABLE")
+		}
+		return before, errors.New("V2_TUNNEL_NETWORK_RECONFIGURE_UNAVAILABLE")
+	}
+
+	candidate := before
+	if agent {
+		candidate.Agent = endpoint
+	} else {
+		candidate.Coding = endpoint
+	}
+	if err := tunnelnetwork.Validate(candidate); err != nil {
+		return before, err
+	}
+	if candidate == before {
+		return before, nil
+	}
+	if err := tunnelnetwork.SaveAtomic(networkPath, candidate); err != nil {
+		return before, err
+	}
+	if err := reconfigurer.ReconfigureHTTPProxy(context.Background(), tunnelnetwork.ProxyURL(endpoint)); err != nil {
+		rollbackErr := tunnelnetwork.SaveAtomic(networkPath, before)
+		return before, errors.Join(err, rollbackErr)
+	}
+	s.mu.Lock()
+	s.tunnelNetwork = candidate
+	s.lastError = ""
+	s.mu.Unlock()
+	return candidate, nil
 }
 
 func (s *Service) UpdateCodingOpenAITunnel(config v2config.TunnelConfig, apiKey string) (Snapshot, error) {

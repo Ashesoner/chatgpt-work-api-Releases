@@ -20,6 +20,8 @@ import {
   UpdateCodexAccessProfile,
   UpdateCodexNetworkAccess,
   UpdateCodexRemoteGitRewrite,
+  UpdateAgentTunnelNetwork,
+  UpdateCodingTunnelNetwork,
 } from "../wailsjs/go/main/App";
 import { WindowHide } from "../wailsjs/runtime/runtime";
 
@@ -40,12 +42,15 @@ type Snapshot = {
   agent?: { bridge_state?: string; pending?: number; claimed?: number; active?: number; completed?: number; revision?: number; idle_count?: number; last_state?: string; last_error?: string; last_progress?: string; image_bytes?: number; requests?: AgentRequestState[] };
   openai_tunnel?: TunnelSnapshot;
   agent_openai_tunnel?: TunnelSnapshot;
+  coding_tunnel_network?: TunnelNetworkInfo;
+  agent_tunnel_network?: TunnelNetworkInfo;
   last_error?: string;
 };
 type Connections = { coding_mcp?: string; agent_mcp?: string; agent_provider?: string };
 type TunnelInfo = { enabled?: boolean; tunnel_id?: string; api_key_present?: boolean; state?: string; last_error?: string };
 type TunnelSnapshot = Omit<TunnelInfo, "enabled"> & { configured?: boolean };
 type TunnelProfile = { id: string; name: string; tunnel_id: string; api_key_present: boolean; active: boolean; state: string };
+type TunnelNetworkInfo = { mode: "direct" | "http_proxy"; http_proxy: string };
 type ConfirmState = {
   title: string;
   description: string;
@@ -259,6 +264,14 @@ export default function App() {
     return action(run, `${page === "coding" ? "Coding" : "Agent"} 账号已断开`);
   }
 
+
+  async function saveTunnelNetwork(page: Page, mode: TunnelNetworkInfo["mode"], httpProxy: string) {
+    const run = page === "coding"
+      ? () => UpdateCodingTunnelNetwork(mode, mode === "http_proxy" ? httpProxy.trim() : "")
+      : () => UpdateAgentTunnelNetwork(mode, mode === "http_proxy" ? httpProxy.trim() : "");
+    return action(run, `${page === "coding" ? "Coding" : "Agent"} Tunnel 网络设置已保存`);
+  }
+
   function deleteTunnelProfile(page: Page, profile: TunnelProfile) {
     const label = page === "coding" ? "Coding" : "Agent";
     askConfirmation({
@@ -324,6 +337,7 @@ export default function App() {
           <CodingPage
             snapshot={snapshot}
             profiles={codingProfiles}
+            tunnelNetwork={snapshot.coding_tunnel_network || { mode: "direct", http_proxy: "" }}
             working={working}
             access={access}
             networkAccess={Boolean(snapshot.codex_network_access)}
@@ -332,6 +346,7 @@ export default function App() {
             onActivateProfile={(id) => activateTunnelProfile("coding", id)}
             onDeactivateProfile={() => deactivateTunnelProfile("coding")}
             onDeleteProfile={(profile) => deleteTunnelProfile("coding", profile)}
+            onTunnelNetworkSave={(mode, proxy) => saveTunnelNetwork("coding", mode, proxy)}
             onAccessChange={(next) => void action(() => UpdateCodexAccessProfile(next), next === "safe" ? "Codex 已切换为安全模式" : "Codex 已切换为完整模式")}
             onNetworkAccessChange={(allowed) => void action(() => UpdateCodexNetworkAccess(allowed), allowed ? "Coding 网络访问已启用" : "Coding 网络访问已禁用")}
             onRemoteGitRewriteChange={changeRemoteGitRewrite}
@@ -342,6 +357,7 @@ export default function App() {
             snapshot={snapshot}
             connections={connections}
             profiles={agentProfiles}
+            tunnelNetwork={snapshot.agent_tunnel_network || { mode: "direct", http_proxy: "" }}
             working={working}
             bridge={bridge}
             onCopy={copy}
@@ -349,6 +365,7 @@ export default function App() {
             onActivateProfile={(id) => activateTunnelProfile("agent", id)}
             onDeactivateProfile={() => deactivateTunnelProfile("agent")}
             onDeleteProfile={(profile) => deleteTunnelProfile("agent", profile)}
+            onTunnelNetworkSave={(mode, proxy) => saveTunnelNetwork("agent", mode, proxy)}
             onEnabledChange={(enabled) => void action(() => SetAgentEnabled(enabled), enabled ? "Agent 已启用" : "Agent 已停用")}
             onCopyAgentKey={() => void copyAgentKey()}
             onRegenerateAgentKey={() => void action(() => RegenerateAgentAPIKey(), "Agent API 密钥已重新生成")}
@@ -386,9 +403,10 @@ function PageTab({ page, activePage, label, detail, status, onSelect }: { page: 
   );
 }
 
-function CodingPage({ snapshot, profiles, working, access, networkAccess, remoteGitRewrite, onSaveProfile, onActivateProfile, onDeactivateProfile, onDeleteProfile, onAccessChange, onNetworkAccessChange, onRemoteGitRewriteChange, onOpenWorkspaceManager }: {
+function CodingPage({ snapshot, profiles, tunnelNetwork, working, access, networkAccess, remoteGitRewrite, onSaveProfile, onActivateProfile, onDeactivateProfile, onDeleteProfile, onTunnelNetworkSave, onAccessChange, onNetworkAccessChange, onRemoteGitRewriteChange, onOpenWorkspaceManager }: {
   snapshot: Snapshot;
   profiles: TunnelProfile[];
+  tunnelNetwork: TunnelNetworkInfo;
   working: boolean;
   access: string;
   networkAccess: boolean;
@@ -397,6 +415,7 @@ function CodingPage({ snapshot, profiles, working, access, networkAccess, remote
   onActivateProfile: (id: string) => Promise<boolean>;
   onDeactivateProfile: () => Promise<boolean>;
   onDeleteProfile: (profile: TunnelProfile) => void;
+  onTunnelNetworkSave: (mode: TunnelNetworkInfo["mode"], httpProxy: string) => Promise<boolean>;
   onAccessChange: (value: string) => void;
   onNetworkAccessChange: (allowed: boolean) => void;
   onRemoteGitRewriteChange: (allowed: boolean) => void;
@@ -404,7 +423,7 @@ function CodingPage({ snapshot, profiles, working, access, networkAccess, remote
 }) {
   return (
     <>
-      <TunnelAccountsCard page="coding" profiles={profiles} working={working} onSave={onSaveProfile} onActivate={onActivateProfile} onDeactivate={onDeactivateProfile} onDelete={onDeleteProfile} />
+      <TunnelAccountsCard page="coding" profiles={profiles} network={tunnelNetwork} working={working} onSave={onSaveProfile} onActivate={onActivateProfile} onDeactivate={onDeactivateProfile} onDelete={onDeleteProfile} onNetworkSave={onTunnelNetworkSave} />
       <section className="card">
         <div className="card-title"><span>CODEX</span><span className={`pill small ${statusClass(snapshot.codex?.state)}`}>{stateLabel(snapshot.codex?.state)}</span></div>
         <div className="segmented">
@@ -426,10 +445,11 @@ function CodingPage({ snapshot, profiles, working, access, networkAccess, remote
   );
 }
 
-function AgentPage({ snapshot, connections, profiles, working, bridge, onCopy, onSaveProfile, onActivateProfile, onDeactivateProfile, onDeleteProfile, onEnabledChange, onCopyAgentKey, onRegenerateAgentKey }: {
+function AgentPage({ snapshot, connections, profiles, tunnelNetwork, working, bridge, onCopy, onSaveProfile, onActivateProfile, onDeactivateProfile, onDeleteProfile, onTunnelNetworkSave, onEnabledChange, onCopyAgentKey, onRegenerateAgentKey }: {
   snapshot: Snapshot;
   connections: Connections;
   profiles: TunnelProfile[];
+  tunnelNetwork: TunnelNetworkInfo;
   working: boolean;
   bridge: string;
   onCopy: (value?: string, label?: string) => void | Promise<void>;
@@ -437,13 +457,14 @@ function AgentPage({ snapshot, connections, profiles, working, bridge, onCopy, o
   onActivateProfile: (id: string) => Promise<boolean>;
   onDeactivateProfile: () => Promise<boolean>;
   onDeleteProfile: (profile: TunnelProfile) => void;
+  onTunnelNetworkSave: (mode: TunnelNetworkInfo["mode"], httpProxy: string) => Promise<boolean>;
   onEnabledChange: (enabled: boolean) => void;
   onCopyAgentKey: () => void;
   onRegenerateAgentKey: () => void;
 }) {
   return (
     <>
-      <TunnelAccountsCard page="agent" profiles={profiles} working={working} onSave={onSaveProfile} onActivate={onActivateProfile} onDeactivate={onDeactivateProfile} onDelete={onDeleteProfile} />
+      <TunnelAccountsCard page="agent" profiles={profiles} network={tunnelNetwork} working={working} onSave={onSaveProfile} onActivate={onActivateProfile} onDeactivate={onDeactivateProfile} onDelete={onDeleteProfile} onNetworkSave={onTunnelNetworkSave} />
       <section className="card">
         <div className="card-title"><span>AGENT 服务</span><label className="switch"><input type="checkbox" aria-label="启用 Agent 服务" checked={Boolean(snapshot.agent_enabled)} disabled={working} onChange={(event) => onEnabledChange(event.target.checked)} /><span /></label></div>
         <StatRow label="服务提供商" value={stateLabel(snapshot.agent_provider?.state || "disabled")} status={snapshot.agent_provider?.state} />
@@ -470,14 +491,77 @@ function AgentPage({ snapshot, connections, profiles, working, bridge, onCopy, o
   );
 }
 
-function TunnelAccountsCard({ page, profiles, working, onSave, onActivate, onDeactivate, onDelete }: {
+function TunnelNetworkInline({ page, network, working, onSave }: {
+  page: Page;
+  network: TunnelNetworkInfo;
+  working: boolean;
+  onSave: (mode: TunnelNetworkInfo["mode"], httpProxy: string) => Promise<boolean>;
+}) {
+  const label = page === "coding" ? "Coding" : "Agent";
+  const [open, setOpen] = useState(false);
+  const [mode, setMode] = useState<TunnelNetworkInfo["mode"]>(network.mode || "direct");
+  const [httpProxy, setHTTPProxy] = useState(network.http_proxy || "");
+
+  useEffect(() => {
+    if (open) return;
+    setMode(network.mode || "direct");
+    setHTTPProxy(network.http_proxy || "");
+  }, [network.mode, network.http_proxy, open]);
+
+  function openEditor() {
+    setMode(network.mode || "direct");
+    setHTTPProxy(network.http_proxy || "");
+    setOpen(true);
+  }
+
+  async function save() {
+    if (await onSave(mode, httpProxy)) setOpen(false);
+  }
+
+  let summary = "直连";
+  if (network.mode === "http_proxy") {
+    try {
+      const proxy = new URL(network.http_proxy);
+      summary = `HTTP代理${proxy.port ? ` · ${proxy.port}` : ""}`;
+    } catch {
+      summary = "HTTP代理";
+    }
+  }
+  const normalizedProxy = httpProxy.trim();
+  const valid = mode === "direct" || /^https?:\/\/\S+$/i.test(normalizedProxy);
+  const changed = mode !== network.mode || (mode === "http_proxy" && normalizedProxy !== network.http_proxy);
+
+  return (
+    <div className="network-inline">
+      <div className="network-inline-summary">
+        <span><small>网络</small><strong>{summary}</strong></span>
+        <button disabled={working} onClick={() => open ? setOpen(false) : openEditor()}>{open ? "取消" : "设置"}</button>
+      </div>
+      {open && (
+        <div className="network-inline-editor">
+          <div className="segmented">
+            <button disabled={working} className={mode === "direct" ? "selected" : ""} onClick={() => setMode("direct")}>直连</button>
+            <button disabled={working} className={mode === "http_proxy" ? "selected" : ""} onClick={() => setMode("http_proxy")}>HTTP 代理</button>
+          </div>
+          {mode === "http_proxy" && <input className="tunnel-input" aria-label={`${label} Tunnel HTTP 代理地址`} value={httpProxy} onChange={(event) => setHTTPProxy(event.target.value)} placeholder="http://127.0.0.1:7897" autoComplete="off" />}
+          <small className="form-note">仅影响 {label} 的 OpenAI Tunnel 外连。</small>
+          <div className="actions"><button disabled={working || !changed || !valid} onClick={() => void save()}>保存</button></div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TunnelAccountsCard({ page, profiles, network, working, onSave, onActivate, onDeactivate, onDelete, onNetworkSave }: {
   page: Page;
   profiles: TunnelProfile[];
+  network: TunnelNetworkInfo;
   working: boolean;
   onSave: (id: string, name: string, tunnelID: string, apiKey: string) => Promise<boolean>;
   onActivate: (id: string) => Promise<boolean>;
   onDeactivate: () => Promise<boolean>;
   onDelete: (profile: TunnelProfile) => void;
+  onNetworkSave: (mode: TunnelNetworkInfo["mode"], httpProxy: string) => Promise<boolean>;
 }) {
   const label = page === "coding" ? "Coding" : "Agent";
   const [editingID, setEditingID] = useState("");
@@ -518,6 +602,7 @@ function TunnelAccountsCard({ page, profiles, working, onSave, onActivate, onDea
   return (
     <section className="card">
       <div className="card-title"><span>CHATGPT MCP 账号</span><span className="pill small ok">{label} 单账号连接</span></div>
+      <TunnelNetworkInline page={page} network={network} working={working} onSave={onNetworkSave} />
       <div className="account-list">
         {profiles.length === 0 && <div className="empty account-empty">暂无已保存账号。</div>}
         {profiles.map((profile) => (

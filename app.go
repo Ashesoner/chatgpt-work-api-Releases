@@ -11,6 +11,7 @@ import (
 
 	"github.com/AAAYNMMM/CWapi/internal/credentials"
 	"github.com/AAAYNMMM/CWapi/internal/tray"
+	"github.com/AAAYNMMM/CWapi/internal/tunnelnetwork"
 	v2config "github.com/AAAYNMMM/CWapi/internal/v2/config"
 	v2service "github.com/AAAYNMMM/CWapi/internal/v2/service"
 	"github.com/AAAYNMMM/CWapi/internal/v2/tunnel"
@@ -34,6 +35,11 @@ type OpenAITunnelInfo struct {
 	TunnelID      string `json:"tunnel_id"`
 	APIKeyPresent bool   `json:"api_key_present"`
 	State         string `json:"state"`
+}
+
+type TunnelNetworkInfo struct {
+	Mode      string `json:"mode"`
+	HTTPProxy string `json:"http_proxy"`
 }
 
 const (
@@ -207,6 +213,47 @@ func openAITunnelInfo(snapshot tunnel.Snapshot) OpenAITunnelInfo {
 		Enabled: snapshot.Configured, TunnelID: snapshot.TunnelID,
 		APIKeyPresent: snapshot.APIKeyPresent, State: snapshot.State,
 	}
+}
+
+func (a *App) UpdateCodingTunnelNetwork(mode, httpProxy string) (TunnelNetworkInfo, error) {
+	return a.updateTunnelNetwork(false, mode, httpProxy)
+}
+
+func (a *App) UpdateAgentTunnelNetwork(mode, httpProxy string) (TunnelNetworkInfo, error) {
+	return a.updateTunnelNetwork(true, mode, httpProxy)
+}
+
+func (a *App) updateTunnelNetwork(agent bool, mode, httpProxy string) (TunnelNetworkInfo, error) {
+	endpoint := tunnelnetwork.Endpoint{Mode: strings.TrimSpace(mode), HTTPProxy: strings.TrimSpace(httpProxy)}
+	if endpoint.Mode == tunnelnetwork.ModeDirect {
+		endpoint.HTTPProxy = ""
+	}
+	if err := tunnelnetwork.ValidateEndpoint(endpoint); err != nil {
+		return TunnelNetworkInfo{}, err
+	}
+	a.reconfigureMu.Lock()
+	defer a.reconfigureMu.Unlock()
+	service, err := a.core()
+	if err != nil {
+		return TunnelNetworkInfo{}, err
+	}
+	var state tunnelnetwork.State
+	if agent {
+		state, err = service.UpdateAgentTunnelNetwork(endpoint)
+		if err != nil {
+			return tunnelNetworkInfo(service.TunnelNetwork().Agent), err
+		}
+		return tunnelNetworkInfo(state.Agent), nil
+	}
+	state, err = service.UpdateCodingTunnelNetwork(endpoint)
+	if err != nil {
+		return tunnelNetworkInfo(service.TunnelNetwork().Coding), err
+	}
+	return tunnelNetworkInfo(state.Coding), nil
+}
+
+func tunnelNetworkInfo(endpoint tunnelnetwork.Endpoint) TunnelNetworkInfo {
+	return TunnelNetworkInfo{Mode: endpoint.Mode, HTTPProxy: endpoint.HTTPProxy}
 }
 
 func (a *App) ConfigureOpenAITunnel(tunnelID, apiKey string) (OpenAITunnelInfo, error) {
