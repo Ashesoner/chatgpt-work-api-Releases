@@ -15,6 +15,7 @@ type Skill struct {
 	Name        string
 	Description string
 	Content     string
+	Hidden      bool
 }
 
 type Store struct {
@@ -88,19 +89,37 @@ func Load(root string, requireCoding, requireAgent bool) (*Store, []string, erro
 		}
 		return nil, nil, fmt.Errorf("SKILL_DIRECTORY_READ_FAILED: %w", err)
 	}
+	skillsRoot := filepath.Join(root, "skills")
+	legacyFiles := make([]string, 0, len(entries))
+	directories := make([]string, 0, len(entries))
 	for _, entry := range entries {
-		if entry.IsDir() || !strings.EqualFold(filepath.Ext(entry.Name()), ".md") {
+		entryPath := filepath.Join(skillsRoot, entry.Name())
+		if entry.Type()&os.ModeSymlink != 0 {
+			warnings = append(warnings, "Failed to load skill: "+entry.Name()+" (linked path not allowed)")
 			continue
 		}
-		path := filepath.Join(root, "skills", entry.Name())
-		payload, readErr := os.ReadFile(path)
-		if readErr != nil || len(strings.TrimSpace(string(payload))) == 0 || !utf8.Valid(payload) {
-			warnings = append(warnings, "Failed to load skill: "+entry.Name())
+		if entry.IsDir() {
+			directories = append(directories, entry.Name())
 			continue
 		}
-		id := strings.TrimSuffix(entry.Name(), filepath.Ext(entry.Name()))
-		skill := parseSkill(id, string(payload))
-		store.Skills[skill.ID] = skill
+		// Windows directory junctions may not report IsDir through DirEntry even
+		// though os.Stat follows them as directories. Report and reject instead
+		// of silently treating a linked directory as an ordinary file.
+		if info, statErr := os.Stat(entryPath); statErr == nil && info.IsDir() {
+			warnings = append(warnings, "Failed to load skill: "+entry.Name()+" (linked directory not allowed)")
+			continue
+		}
+		if strings.EqualFold(filepath.Ext(entry.Name()), ".md") {
+			legacyFiles = append(legacyFiles, entry.Name())
+		}
+	}
+	// Preserve backward compatibility: existing single-file IDs claim their IDs
+	// before directory Skills expose main IDs or hidden reference aliases.
+	for _, fileName := range legacyFiles {
+		loadSingleFileSkill(store, &warnings, skillsRoot, fileName)
+	}
+	for _, directoryName := range directories {
+		loadDirectorySkill(store, &warnings, skillsRoot, directoryName)
 	}
 	return store, warnings, nil
 }
@@ -130,10 +149,16 @@ func (s *Store) SkillList() string {
 		return strings.Join(lines, "\n") + "\n(none)"
 	}
 	ids := make([]string, 0, len(s.Skills))
-	for id := range s.Skills {
+	for id, skill := range s.Skills {
+		if skill.Hidden {
+			continue
+		}
 		ids = append(ids, id)
 	}
 	sort.Strings(ids)
+	if len(ids) == 0 {
+		return strings.Join(lines, "\n") + "\n(none)"
+	}
 	for _, id := range ids {
 		skill := s.Skills[id]
 		lines = append(lines, fmt.Sprintf("%s - %s: %s", skill.ID, skill.Name, skill.Description))
@@ -166,8 +191,10 @@ func readRequired(path, code string) (string, error) {
 
 func parseSkill(id, content string) Skill {
 	id = strings.TrimSpace(id)
-	name := id
-	description := ""
+	name, description := frontMatterMetadata(content)
+	if name == "" {
+		name = id
+	}
 	for _, line := range strings.Split(content, "\n") {
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "# ") && name == id {
@@ -175,10 +202,10 @@ func parseSkill(id, content string) Skill {
 				name = candidate
 			}
 		}
-		if strings.HasPrefix(strings.ToLower(trimmed), "description:") {
-			description = strings.TrimSpace(trimmed[len("Description:"):])
-			if description != "" {
-				break
+		if description == "" && strings.HasPrefix(strings.ToLower(trimmed), "description:") {
+			candidate := strings.TrimSpace(trimmed[len("Description:"):])
+			if candidate != "" && candidate != ">" && candidate != "|" {
+				description = candidate
 			}
 		}
 	}

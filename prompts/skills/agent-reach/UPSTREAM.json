@@ -1,0 +1,16 @@
+{
+    "repository":  "https://github.com/Panniantong/Agent-Reach",
+    "package_version":  "1.5.0",
+    "upstream_commit":  "94f06c1969dfc1834001269d79d3ad0972d9dee6",
+    "source":  "installed agent_reach package",
+    "files":  {
+                  "SKILL.md":  "0df9cd22ade17b77cc3698a14f1224c4aad9df5d533a1878dbe5df11b62f8377",
+                  "references/career.md":  "ade444ac499e55f02c84bd663253a28cebc1eefc7f56c7248dc6792841fbe53e",
+                  "references/dev.md":  "f6f91107557eacf1d28a023d597eb5a61353a8a6ede286c3c0a4888d274df9fe",
+                  "references/finance.md":  "c0cf89af1119d81890f6797ff9e8154a00ee08c17141e7d18c1b09658a916551",
+                  "references/search.md":  "23bfc54a3b85847ac7c1e12d6dbb0913d6fa3bb89a706d79e2b36396a8a8ef5d",
+                  "references/social.md":  "e2e6451eb931effd4f63ea407fbb109bea1e98de34bd703c52753ad0cc7025b3",
+                  "references/video.md":  "167ce732382c664eea63b884685dc085caa27cd69820138f7eeb91b0162efac8",
+                  "references/web.md":  "b238fc897975a693d7bb262600ca2ea69cd13a4892e870d346dbe375c880b303"
+              }
+}

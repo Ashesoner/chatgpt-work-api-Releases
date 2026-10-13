@@ -27,7 +27,7 @@ func registerSkillTool(server *mcp.Server, store *promptstore.Store) error {
 	}
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        ToolLoadSkill,
-		Description: "Load one global CWapi task Skill by ID. Skills are cached at CWapi startup; editing Skill files requires restarting CWapi.",
+		Description: "Load one global CWapi task Skill or directory-Skill reference alias by ID. Skills are cached at CWapi startup; editing Skill files requires restarting CWapi.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input LoadSkillInput) (*mcp.CallToolResult, LoadSkillOutput, error) {
 		_ = ctx
 		skill, err := store.LoadSkill(input.Name)

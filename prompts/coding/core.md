@@ -17,8 +17,8 @@ CWapi Coding mode lets Web GPT operate durable Git workspaces through MCP. Works
 
 ## Skills
 
-- `load_skill(name)` loads one startup-cached global Skill by its Skill ID.
-- Load only Skills listed in the startup Skill inventory. A missing Skill returns `SKILL_NOT_FOUND`.
+- `load_skill(name)` loads one startup-cached global Skill or a reference alias declared by a loaded directory Skill.
+- Load only Skills listed in the startup Skill inventory, plus reference aliases explicitly declared by a Skill you already loaded. A missing Skill or alias returns `SKILL_NOT_FOUND`.
 - Loading a Skill does not modify the repository or workspace.
 
 Tool results are authoritative for command exit status and output. Returned workspace/Git state is authoritative for the state represented by that result. Protocol and safety enforcement are implemented by CWapi, not by natural-language conventions.

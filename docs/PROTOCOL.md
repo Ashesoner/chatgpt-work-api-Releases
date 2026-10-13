@@ -116,7 +116,7 @@ load_skill
 
 ### `load_skill`
 
-Coding 与 Agent 共用该工具。输入 Skill ID，返回 CWapi 启动时缓存的全局 Skill 内容；具体 Skill 不会默认塞进 MCP initialization context。修改 `prompts/` 后需要重启 CWapi。
+Coding 与 Agent 共用该工具。输入 Skill ID，返回 CWapi 启动时缓存的全局 Skill 内容；具体 Skill 不会默认塞进 MCP initialization context。除原有单文件 Skill 外，目录 Skill 可以把 `references/*.md` 暴露为隐藏 reference alias（例如 `agent-reach.social`），这些 alias 不进入启动 Skill 清单，只由已加载的父 Skill 声明，调用仍保持 `load_skill(name)`，MCP 参数结构不变。修改 `prompts/` 后需要重启 CWapi。
 
 ## Agent tools
 
@@ -150,7 +150,7 @@ bridge 生命周期与 request 生命周期分离。`agent_close` 只 detach 当
 
 ### `load_skill`
 
-输入 `{"name":"debugging"}` 等 Skill ID，返回启动时缓存的 Skill name/description/content。Skill 文件修改后需重启 CWapi。缺失 Skill 返回 `SKILL_NOT_FOUND`。
+输入 `{"name":"debugging"}` 等 Skill ID，返回启动时缓存的 Skill name/description/content；目录 Skill 的 reference alias 同样只使用 `name`，例如 `{"name":"agent-reach.social"}`。Skill 文件修改后需重启 CWapi。缺失 Skill 或 alias 返回 `SKILL_NOT_FOUND`。
 
 ## OpenAI-compatible Provider
 

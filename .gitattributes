@@ -7,3 +7,5 @@ go.sum text eol=lf
 frontend/wailsjs/go/main/App.d.ts text eol=lf
 frontend/wailsjs/go/main/App.js text eol=lf
 frontend/wailsjs/go/models.ts text eol=lf
+prompts/skills/agent-reach/SKILL.md -whitespace
+prompts/skills/agent-reach/references/*.md -whitespace

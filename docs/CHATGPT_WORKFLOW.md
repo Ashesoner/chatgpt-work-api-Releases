@@ -2,9 +2,9 @@
 
 ## First-contact operating manual
 
-2.0.6 将 first-contact prompt 分成全局文件，而不是把大量经验硬编码进 Go 常量。CWapi 启动时扫描并缓存一次 `prompts/`：Coding 与 Agent 各有独立 Core/Rules，共享 Skills。MCP initialize 的 `instructions` 只拼接当前 mode 的 Core + Rules + Skill 清单（ID/name/Description），Skill body 由 `load_skill(name)` 按 Rules 需要加载。
+2.0.6 将 first-contact prompt 分成全局文件，而不是把大量经验硬编码进 Go 常量。CWapi 启动时扫描并缓存一次 `prompts/`：Coding 与 Agent 各有独立 Core/Rules，共享 Skills。MCP initialize 的 `instructions` 只拼接当前 mode 的 Core + Rules + 顶层 Skill 清单（ID/name/Description），Skill body 由 `load_skill(name)` 按 Rules 需要加载。Skill 既可以是原有 `skills/<id>.md` 单文件，也可以是 `skills/<id>/SKILL.md` + `references/*.md` 目录；目录 reference 不进入启动清单，而由父 Skill 注入的别名说明按需加载，例如 `references/social.md` 映射为 `<id>.social`，仍调用同一个 `load_skill(name)`。
 
-Core 只描述通信协议与工具使用；Rules 描述 mode-specific 行为和 Skill routing；Skills 保存 coding/debugging/git/testing/release 等任务经验。修改 Rules/Skills/Core 后必须重启 CWapi。没有 workspace-specific Skill、Profile、热加载、数据库或 GUI 管理。
+Core 只描述通信协议与工具使用；Rules 描述 mode-specific 行为和 Skill routing；Skills 保存 coding/debugging/git/testing/release 以及外部能力说明等任务经验。目录 Skill 的 reference alias 只有在父 Skill 已加载并明确声明后才允许继续加载；可选 `CWAPI.md` 会在缓存时追加到父 Skill，但不改写上游 `SKILL.md`。单个 Skill Markdown 最大 1 MiB，目录 reference 最多 64 个，linked path（含 Windows junction）拒绝加载。修改 Rules/Skills/Core 后必须重启 CWapi。没有 workspace-specific Skill、Profile、热加载、数据库或 GUI 管理。
 
 单个 Skill 损坏时跳过并记录 warning；对应 enabled mode 的 Core/Rules 缺失或不可读时，该 mode 启动明确失败。协议正确性、授权、request correlation 和安全边界仍由 Go code 强制执行。
 

@@ -112,7 +112,7 @@ The two lines are not configuration-compatible. Read the [Version Guide](docs/VE
 - Inspect HEAD, tracking HEAD, dirty state, and divergence with `coding_status`; while a foreground command is genuinely busy, status also reports its action, executable, start time, and elapsed seconds without echoing argv.
 - Run different branches of the same repository concurrently with branch-aware workspaces; resume the same repository + branch from a new ChatGPT conversation with compatible `coding_open(..., resume=true)`.
 - `coding_exec` / `coding_status` / `coding_attachment` / `coding_close` accept optional `target_ref`: repository-only calls stay compatible with one active branch, multiple active branches require a target and otherwise return `CODING_SESSION_AMBIGUOUS`; an inactive named target returns `CODING_SESSION_NOT_ACTIVE` without fallback.
-- Load startup-cached shared task Skills on demand with `load_skill(name)`; Core/Rules/Skill changes take effect after restarting CWapi.
+- Load startup-cached shared task Skills on demand with `load_skill(name)`. Both legacy single-file Skills and directory Skills (`SKILL.md` + `references/*.md`) are supported without changing the MCP tool schema; reference files are exposed as aliases declared by the loaded parent Skill. An optional `CWAPI.md` overlay keeps local integration rules separate from upstream Skill files. Core/Rules/Skill changes take effect after restarting CWapi.
 - Keep source and inspectable text in the command path; `coding_attachment` transfers only bounded raster images from the selected active workspace without recompression, resizing, transcoding, or OCR; it follows the same optional `target_ref` routing rules as exec/status/close.
 
 ### Agent capabilities
